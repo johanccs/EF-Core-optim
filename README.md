@@ -2,7 +2,7 @@
 
 A self-paced, browser-based course on **configuring and optimizing Entity Framework Core**, from beginner to expert, with a built-in AI tutor. It targets **EF Core 10 (LTS)**, and almost everything also applies to EF Core 8 and 9. Content was last reviewed in **October 2026**.
 
-- **Live site (once GitHub Pages is enabled):** https://johanccs.github.io/EF-Core-optim/
+- **Live site:** https://johanccs.github.io/EF-Core-optim/
 - **Locally:** open `index.html` in a browser. You don't need a server.
 
 ## Course goal
@@ -53,12 +53,18 @@ What the assistant does for accuracy:
 
 ## Publishing with GitHub Pages
 
-Deployment is automated by `.github/workflows/pages.yml`, which builds the lessons and publishes the site on every push to `main`. One-time setup:
+The live site is served from the **`gh-pages` branch**, which contains only the built site: `index.html`, `404.html`, `.nojekyll`, `lessons/` and `assets/`. To publish an update:
 
-1. **Plan check:** GitHub Pages for a **private** repository needs GitHub Pro, Team or Enterprise. On the free plan, make the repository public first. Note that a published Pages site is publicly accessible, unless you use Enterprise Cloud access control.
-2. Go to **Settings → Pages → Build and deployment → Source: GitHub Actions**.
-3. Merge this work into `main` (or run the workflow manually from the **Actions** tab).
-4. The site appears at **https://johanccs.github.io/EF-Core-optim/** after the workflow finishes.
+```bash
+python3 build.py
+git worktree add ../site gh-pages            # first time only
+cp -r index.html 404.html .nojekyll lessons assets ../site/
+cd ../site && git add -A && git commit -m "Publish site" && git push
+```
+
+If GitHub ever stops serving it, check **Settings → Pages → Source: Deploy from a branch → `gh-pages` / root**.
+
+**Alternative (automated):** `.github/workflows/pages.yml` builds and deploys on every push to `main`. To use it, merge the course into `main` and set **Settings → Pages → Source: GitHub Actions**. That replaces the `gh-pages` deployment.
 
 ## Development
 

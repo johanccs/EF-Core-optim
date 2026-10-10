@@ -2,15 +2,23 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src https:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DbContext Configuration in Depth · EF Core Optimization Course</title>
-<meta name="description" content="DbContext Configuration in Depth: a lesson from the EF Core Optimization Course.">
+<meta name="description" content="Lesson 2 got you running. This lesson explains how a DbContext actually receives its configuration, so you can set it up correctly in web apps, background workers, the dotnet ef tools and tests.">
+<meta property="og:title" content="DbContext Configuration in Depth">
+<meta property="og:description" content="Lesson 2 got you running. This lesson explains how a DbContext actually receives its configuration, so you can set it up correctly in web apps, background workers, the dotnet ef tools and tests.">
+<meta property="og:type" content="article">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="../assets/css/course.css">
+<script src="../assets/js/theme-init.js"></script>
 </head>
 <body data-lesson="5" data-root="../">
+<a class="skip-link" href="#main">Skip to content</a>
 <div class="layout">
 <nav id="sidebar" aria-label="Lessons"></nav>
-<main class="content">
+<main class="content" id="main">
+<noscript><p class="callout warn">Navigation, quizzes and progress tracking need JavaScript. The lesson text below still works without it.</p></noscript>
 <article>
 <h1>DbContext Configuration in Depth</h1>
 <p class="lead">Lesson 2 got you running. This lesson explains how a DbContext actually receives its configuration, so you can set it up correctly in web apps, background workers, the <code>dotnet ef</code> tools and tests.</p>
@@ -23,7 +31,7 @@
 </div>
 
 <div class="objectives">
-  <h2 class="box-title">By the end of this lesson you will be able to</h2>
+  <h2 class="box-title" id="by-the-end-of-this-lesson-you-will-be-able-to">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Explain how <code>DbContextOptions&lt;T&gt;</code> is built and in what order configuration runs.</li>
     <li>Pick between <code>AddDbContext</code>, <code>OnConfiguring</code>, <code>AddDbContextFactory</code> and manual construction.</li>
@@ -33,7 +41,7 @@
   </ul>
 </div>
 
-<h2>The configuration pipeline</h2>
+<h2 id="the-configuration-pipeline">The configuration pipeline</h2>
 <p>A DbContext is configured through a <code>DbContextOptionsBuilder</code>. The finished, immutable <code>DbContextOptions&lt;TContext&gt;</code> holds the provider (SQL Server, PostgreSQL…), the connection, logging, interceptors and behaviour switches. Configuration can come from two places:</p>
 <ol>
   <li><b>Outside the context</b>: the delegate passed to <code>AddDbContext</code>, or a <code>DbContextOptionsBuilder</code> you build yourself and pass to the constructor.</li>
@@ -57,7 +65,7 @@
 <div class="callout warn"><span class="title">Two sources, one winner</span>
 If both <code>AddDbContext</code> and <code>OnConfiguring</code> set the same option, <code>OnConfiguring</code> runs last and wins. Guard any fallback configuration in <code>OnConfiguring</code> with <code>IsConfigured</code>, or, better, don't use <code>OnConfiguring</code> at all in applications that use DI.</div>
 
-<h2>Choosing how to configure</h2>
+<h2 id="choosing-how-to-configure">Choosing how to configure</h2>
 <table>
   <thead><tr><th scope="col">Approach</th><th scope="col">When to use</th><th scope="col">Lifetime</th></tr></thead>
   <tbody>
@@ -69,7 +77,7 @@ If both <code>AddDbContext</code> and <code>OnConfiguring</code> set the same op
   </tbody>
 </table>
 
-<h3>Resolving services while configuring</h3>
+<h3 id="resolving-services-while-configuring">Resolving services while configuring</h3>
 <p>The overload of <code>AddDbContext</code> that takes the <code>IServiceProvider</code> lets you pull interceptors, configuration or environment information from DI:</p>
 
 <pre><code class="language-csharp">builder.Services.AddSingleton&lt;SlowQueryInterceptor&gt;();
@@ -81,7 +89,7 @@ builder.Services.AddDbContext&lt;ShopContext&gt;((sp, options) =&gt;
            .AddInterceptors(sp.GetRequiredService&lt;SlowQueryInterceptor&gt;());
 });</code></pre>
 
-<h2>Strongly-typed, validated settings</h2>
+<h2 id="strongly-typed-validated-settings">Strongly-typed, validated settings</h2>
 <p>Scattering <code>Configuration["..."]</code> lookups and magic numbers through <code>Program.cs</code> makes configuration hard to review and easy to break. Bind a settings class once, validate it, and <b>fail at startup</b> instead of at the first query:</p>
 
 <pre data-label="appsettings.json"><code class="language-json">{
@@ -122,7 +130,7 @@ builder.Services.AddDbContext&lt;ShopContext&gt;((sp, options) =&gt;
 <div class="callout tip"><span class="title">Keep secrets out of appsettings.json</span>
 The example above shows the shape of the settings. The real connection string, especially one containing a password, belongs in user-secrets, environment variables or a vault. Lesson 6 covers this.</div>
 
-<h2>Multiple DbContexts</h2>
+<h2 id="multiple-dbcontexts">Multiple DbContexts</h2>
 <p>Large applications often split the model into several contexts, for example one per bounded context (Sales, Catalog, Identity). Smaller contexts build faster and keep teams independent. Each context can have its own schema and migrations history:</p>
 
 <pre><code class="language-csharp">builder.Services.AddDbContext&lt;SalesContext&gt;(o =&gt; o.UseSqlServer(connStr,
@@ -141,7 +149,7 @@ dotnet ef migrations add InitialCatalog --context CatalogContext --output-dir Mi
 <div class="callout warn"><span class="title">Use the generic options type</span>
 With more than one context, each constructor must take <code>DbContextOptions&lt;TContext&gt;</code> for its <i>own</i> type, not the non-generic <code>DbContextOptions</code>. Otherwise DI can hand one context the other context's options.</div>
 
-<h2>Design-time configuration (dotnet ef)</h2>
+<h2 id="design-time-configuration-dotnet-ef">Design-time configuration (dotnet ef)</h2>
 <p>Commands like <code>dotnet ef migrations add</code> need to create your context <b>without running your app normally</b>. The tools try, in order:</p>
 <ol>
   <li>An <code>IDesignTimeDbContextFactory&lt;TContext&gt;</code> implementation in the project.</li>
@@ -164,7 +172,7 @@ With more than one context, each constructor must take <code>DbContextOptions&lt
 }</code></pre>
 <p><code>MigrationsAssembly</code> tells EF to store migrations in a separate project. That's useful for keeping migrations out of the domain assembly, or for maintaining separate migration sets per provider.</p>
 
-<h2>Common configuration errors decoded</h2>
+<h2 id="common-configuration-errors-decoded">Common configuration errors decoded</h2>
 <table>
   <thead><tr><th scope="col">Error message</th><th scope="col">Usual cause</th></tr></thead>
   <tbody>
@@ -177,7 +185,7 @@ With more than one context, each constructor must take <code>DbContextOptions&lt
 </table>
 
 <div class="takeaways">
-  <h2 class="box-title">🔑 Key takeaways</h2>
+  <h2 class="box-title" id="key-takeaways">🔑 Key takeaways</h2>
   <ul>
     <li>Configuration flows from the outside (DI or options), then <code>OnConfiguring</code>, which runs last. Guard fallbacks with <code>IsConfigured</code>.</li>
     <li>Bind database settings to a validated options class and use <code>ValidateOnStart</code> to fail fast.</li>
@@ -186,9 +194,9 @@ With more than one context, each constructor must take <code>DbContextOptions&lt
   </ul>
 </div>
 
-<h2>Exercise</h2>
+<h2 id="exercise">Exercise</h2>
 <div class="exercise">
-  <h3 class="box-title">🛠 Production-grade configuration</h3>
+  <h3 class="box-title" id="production-grade-configuration">🛠 Production-grade configuration</h3>
   <ol>
     <li>Create <code>DatabaseOptions</code>, bind it with <code>ValidateOnStart</code>, and configure <code>ShopContext</code> from it.</li>
     <li>Delete the <code>CommandTimeoutSeconds</code> value, set it to <code>0</code>, and start the app. Confirm it refuses to start, with a clear message.</li>
@@ -200,7 +208,7 @@ With more than one context, each constructor must take <code>DbContextOptions&lt
   </details>
 </div>
 
-<h2>Quiz</h2>
+<h2 id="quiz">Quiz</h2>
 
 <div class="quiz" data-answer="b">
 <p class="q">Both <code>AddDbContext</code> and <code>OnConfiguring</code> set a command timeout. Which value is used?</p>
@@ -235,13 +243,14 @@ With more than one context, each constructor must take <code>DbContextOptions&lt
 <p class="explain">The factory is checked first, which makes design-time creation independent of your app's startup code.</p>
 </div>
 
-<h2>Further reading</h2>
+<h2 id="further-reading">Further reading</h2>
 <ul>
   <li><a href="https://learn.microsoft.com/ef/core/dbcontext-configuration/" target="_blank" rel="noopener">DbContext lifetime, configuration and initialization</a></li>
   <li><a href="https://learn.microsoft.com/ef/core/cli/dbcontext-creation" target="_blank" rel="noopener">Design-time DbContext creation</a></li>
   <li><a href="https://learn.microsoft.com/dotnet/core/extensions/options" target="_blank" rel="noopener">Options pattern in .NET</a></li>
   <li><a href="https://learn.microsoft.com/ef/core/managing-schemas/migrations/projects" target="_blank" rel="noopener">Using a separate migrations project</a></li>
 </ul>
+<p class="reviewed">Last reviewed October 2026 against EF Core 10 (LTS). Spotted an error? Select it, right-click, and ask the AI tutor to double-check it, or open an issue in the repository.</p>
 </article>
 <nav id="pager" aria-label="Lesson navigation"></nav>
 </main>

@@ -2,15 +2,23 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src https:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tracking vs No-Tracking Queries · EF Core Optimization Course</title>
-<meta name="description" content="Tracking vs No-Tracking Queries: a lesson from the EF Core Optimization Course.">
+<meta name="description" content="By default, every entity EF Core loads is registered in the change tracker and snapshotted. That&#x27;s essential when you plan to update entities, and pure overhead when you only read them. This lesson shows how to choose.">
+<meta property="og:title" content="Tracking vs No-Tracking Queries">
+<meta property="og:description" content="By default, every entity EF Core loads is registered in the change tracker and snapshotted. That&#x27;s essential when you plan to update entities, and pure overhead when you only read them. This lesson shows how to choose.">
+<meta property="og:type" content="article">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="../assets/css/course.css">
+<script src="../assets/js/theme-init.js"></script>
 </head>
 <body data-lesson="10" data-root="../">
+<a class="skip-link" href="#main">Skip to content</a>
 <div class="layout">
 <nav id="sidebar" aria-label="Lessons"></nav>
-<main class="content">
+<main class="content" id="main">
+<noscript><p class="callout warn">Navigation, quizzes and progress tracking need JavaScript. The lesson text below still works without it.</p></noscript>
 <article>
 <h1>Tracking vs No-Tracking Queries</h1>
 <p class="lead">By default, every entity EF Core loads is registered in the change tracker and snapshotted. That's essential when you plan to update entities, and pure overhead when you only read them. This lesson shows how to choose.</p>
@@ -23,7 +31,7 @@
 </div>
 
 <div class="objectives">
-  <h2 class="box-title">By the end of this lesson you will be able to</h2>
+  <h2 class="box-title" id="by-the-end-of-this-lesson-you-will-be-able-to">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Explain what tracking costs: memory, snapshots, identity resolution and <code>DetectChanges</code>.</li>
     <li>Use <code>AsNoTracking</code>, <code>AsNoTrackingWithIdentityResolution</code> and <code>AsTracking</code>.</li>
@@ -32,7 +40,7 @@
   </ul>
 </div>
 
-<h2>What tracking does</h2>
+<h2 id="what-tracking-does">What tracking does</h2>
 <p>For each entity returned by a tracking query, EF:</p>
 <ol>
   <li>Looks up its key in the identity map. If an instance with that key is already tracked, EF returns <b>that same instance</b> and throws away the new row data. This is identity resolution.</li>
@@ -41,7 +49,7 @@
 </ol>
 <p>None of this is needed for read-only scenarios such as API GET endpoints, reports, exports and view models.</p>
 
-<h2>AsNoTracking</h2>
+<h2 id="asnotracking">AsNoTracking</h2>
 
 <pre><code class="language-csharp">var products = await db.Products
     .AsNoTracking()
@@ -52,7 +60,7 @@
 <div class="callout warn"><span class="title">The catch: no identity resolution</span>
 Without tracking, the same database row returned twice becomes <b>two separate objects</b>. Loading 1,000 orders with <code>Include(o =&gt; o.Customer)</code> where all orders belong to 3 customers gives you 1,000 <code>Customer</code> instances, not 3.</div>
 
-<h3>AsNoTrackingWithIdentityResolution</h3>
+<h3 id="asnotrackingwithidentityresolution">AsNoTrackingWithIdentityResolution</h3>
 <p>This gives you de-duplicated instances without full tracking. EF uses a temporary identity map for the duration of the query, then discards it:</p>
 
 <pre><code class="language-csharp">var orders = await db.Orders
@@ -62,7 +70,7 @@ Without tracking, the same database row returned twice becomes <b>two separate o
 // orders sharing a customer point to the SAME Customer object</code></pre>
 <p>It's slower than plain <code>AsNoTracking</code> but faster than tracking. Use it when you serialize graphs with shared references or need reference equality.</p>
 
-<h2>Choosing a tracking mode</h2>
+<h2 id="choosing-a-tracking-mode">Choosing a tracking mode</h2>
 <table>
   <thead><tr><th scope="col">Scenario</th><th scope="col">Use</th></tr></thead>
   <tbody>
@@ -76,7 +84,7 @@ Without tracking, the same database row returned twice becomes <b>two separate o
 <div class="callout info"><span class="title">Projections are untracked automatically</span>
 <code>db.Products.Select(p =&gt; new ProductDto(p.Id, p.Name))</code> is never tracked, because DTOs aren't entities. If a projection <i>contains</i> an entity instance, such as <code>new { Product = p, p.Category.Name }</code>, that entity <b>is</b> tracked in a tracking query.</div>
 
-<h2>Context-wide default</h2>
+<h2 id="context-wide-default">Context-wide default</h2>
 <p>For read-heavy services, make no-tracking the default and opt in where you write:</p>
 
 <pre><code class="language-csharp">builder.Services.AddDbContext&lt;ShopContext&gt;(o =&gt; o
@@ -92,7 +100,7 @@ await db.SaveChangesAsync();</code></pre>
 <div class="callout tip"><span class="title">Read/write separation</span>
 A common pattern in larger systems is a <code>ReadShopContext</code> with no-tracking defaults, possibly pointed at a read replica, alongside the normal writable context. Query handlers inject the read context and command handlers the write context.</div>
 
-<h2>Updating without loading</h2>
+<h2 id="updating-without-loading">Updating without loading</h2>
 <p>If you already know the key and the new values, you don't need a <code>SELECT</code> first:</p>
 
 <pre><code class="language-csharp">// Update one column of a known row: 1 round trip instead of 2
@@ -105,7 +113,7 @@ await db.SaveChangesAsync();
 <div class="callout warn"><span class="title">Careful with <code>Update()</code></span>
 <code>db.Update(entity)</code> marks <b>every</b> property as modified and updates all columns, including ones you didn't change, and it walks the whole reachable graph. Prefer <code>Attach</code> plus setting the changed properties, or <code>Entry(e).Property(x =&gt; x.Price).IsModified = true</code>.</div>
 
-<h2>Keeping the change tracker small</h2>
+<h2 id="keeping-the-change-tracker-small">Keeping the change tracker small</h2>
 <p>Long-lived contexts with thousands of tracked entities make every <code>DetectChanges</code> slower. When processing in batches:</p>
 
 <pre><code class="language-csharp">foreach (var batch in ids.Chunk(1000))
@@ -117,7 +125,7 @@ await db.SaveChangesAsync();
 }</code></pre>
 
 <div class="takeaways">
-  <h2 class="box-title">🔑 Key takeaways</h2>
+  <h2 class="box-title" id="key-takeaways">🔑 Key takeaways</h2>
   <ul>
     <li>Tracking costs memory and CPU per row. Use it only when you'll modify and save the entities.</li>
     <li><code>AsNoTracking</code> for read paths, <code>AsNoTrackingWithIdentityResolution</code> when shared references matter.</li>
@@ -126,9 +134,9 @@ await db.SaveChangesAsync();
   </ul>
 </div>
 
-<h2>Exercise</h2>
+<h2 id="exercise">Exercise</h2>
 <div class="exercise">
-  <h3 class="box-title">🛠 Measure it</h3>
+  <h3 class="box-title" id="measure-it">🛠 Measure it</h3>
   <ol>
     <li>Load all 10,000 orders with <code>Include(o =&gt; o.Customer)</code> three ways: tracking, <code>AsNoTracking</code>, <code>AsNoTrackingWithIdentityResolution</code>.</li>
     <li>Time each with <code>Stopwatch</code> (run each a few times and discard the first) and check memory with <code>GC.GetAllocatedBytesForCurrentThread()</code>.</li>
@@ -139,7 +147,7 @@ await db.SaveChangesAsync();
   </details>
 </div>
 
-<h2>Quiz</h2>
+<h2 id="quiz">Quiz</h2>
 
 <div class="quiz" data-answer="a">
 <p class="q">Does <code>AsNoTracking()</code> change the SQL that EF Core generates?</p>
@@ -174,11 +182,12 @@ await db.SaveChangesAsync();
 <p class="explain"><code>Update()</code> marks the whole entity, and reachable entities, as Modified. Use <code>Attach</code> and change specific properties for minimal updates.</p>
 </div>
 
-<h2>Further reading</h2>
+<h2 id="further-reading">Further reading</h2>
 <ul>
   <li><a href="https://learn.microsoft.com/ef/core/querying/tracking" target="_blank" rel="noopener">Tracking vs. no-tracking queries</a></li>
   <li><a href="https://learn.microsoft.com/ef/core/change-tracking/" target="_blank" rel="noopener">Change tracking in EF Core</a></li>
 </ul>
+<p class="reviewed">Last reviewed October 2026 against EF Core 10 (LTS). Spotted an error? Select it, right-click, and ask the AI tutor to double-check it, or open an issue in the repository.</p>
 </article>
 <nav id="pager" aria-label="Lesson navigation"></nav>
 </main>

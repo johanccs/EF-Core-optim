@@ -33,7 +33,7 @@ modelBuilder.Entity<Payment>().UseTpcMappingStrategy();
 ```
 
 <table>
-  <tr><th></th><th>TPH (table-per-hierarchy)</th><th>TPT (table-per-type)</th><th>TPC (table-per-concrete-type)</th></tr>
+  <tr><th>Scenario</th><th>TPH (table-per-hierarchy)</th><th>TPT (table-per-type)</th><th>TPC (table-per-concrete-type)</th></tr>
   <tr><td>Query all payments</td><td>✅ Single table scan</td><td>❌ LEFT JOINs to every subtype table</td><td>⚠ <code>UNION ALL</code> across tables</td></tr>
   <tr><td>Query one subtype</td><td>✅ <code>WHERE Kind = 'Card'</code></td><td>⚠ JOIN base + subtype</td><td>✅ Single table, no JOIN</td></tr>
   <tr><td>Insert</td><td>✅ 1 row</td><td>❌ 2+ rows in 2+ tables</td><td>✅ 1 row</td></tr>

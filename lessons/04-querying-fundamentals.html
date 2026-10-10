@@ -2,15 +2,23 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src https:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Querying Fundamentals · EF Core Optimization Course</title>
-<meta name="description" content="Querying Fundamentals: a lesson from the EF Core Optimization Course.">
+<meta name="description" content="Knowing where a query runs is the foundation of EF Core performance: in the database, or in your application&#x27;s memory. This lesson covers deferred execution, IQueryable versus IEnumerable , client evaluation and async.">
+<meta property="og:title" content="Querying Fundamentals">
+<meta property="og:description" content="Knowing where a query runs is the foundation of EF Core performance: in the database, or in your application&#x27;s memory. This lesson covers deferred execution, IQueryable versus IEnumerable , client evaluation and async.">
+<meta property="og:type" content="article">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="../assets/css/course.css">
+<script src="../assets/js/theme-init.js"></script>
 </head>
 <body data-lesson="4" data-root="../">
+<a class="skip-link" href="#main">Skip to content</a>
 <div class="layout">
 <nav id="sidebar" aria-label="Lessons"></nav>
-<main class="content">
+<main class="content" id="main">
+<noscript><p class="callout warn">Navigation, quizzes and progress tracking need JavaScript. The lesson text below still works without it.</p></noscript>
 <article>
 <h1>Querying Fundamentals</h1>
 <p class="lead">Knowing where a query runs is the foundation of EF Core performance: in the database, or in your application's memory. This lesson covers deferred execution, <code>IQueryable</code> versus <code>IEnumerable</code>, client evaluation and async.</p>
@@ -23,7 +31,7 @@
 </div>
 
 <div class="objectives">
-  <h2 class="box-title">By the end of this lesson you will be able to</h2>
+  <h2 class="box-title" id="by-the-end-of-this-lesson-you-will-be-able-to">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Tell when a query executes, and avoid executing it twice.</li>
     <li>Keep filtering, sorting and aggregation in the database.</li>
@@ -32,7 +40,7 @@
   </ul>
 </div>
 
-<h2>Deferred execution</h2>
+<h2 id="deferred-execution">Deferred execution</h2>
 <p>An <code>IQueryable&lt;T&gt;</code> is a <b>description</b> of a query. Each operator (<code>Where</code>, <code>OrderBy</code>, <code>Select</code>) adds to the expression tree. Nothing runs until a <b>terminal operation</b> enumerates it:</p>
 <ul>
   <li>Materializers: <code>ToList</code>, <code>ToArray</code>, <code>ToDictionary</code> (and their async versions)</li>
@@ -58,7 +66,7 @@ foreach (var o in paid) { }        // query 2: SELECT ...
 var list = paid.ToList();          // query 3: SELECT ...</code></pre>
 Materialize once with <code>ToList()</code> if you need the data several times. If you only need a count, ask the database for the count and nothing else.</div>
 
-<h2>IQueryable vs IEnumerable</h2>
+<h2 id="iqueryable-vs-ienumerable">IQueryable vs IEnumerable</h2>
 <p>This is the most expensive beginner mistake. Once a query becomes an <code>IEnumerable&lt;T&gt;</code>, every later operator runs <b>in memory</b>, on all the rows already fetched.</p>
 
 <div class="compare">
@@ -83,7 +91,7 @@ var big = await GetOrders()
 </div>
 <p>The same thing happens with <code>AsEnumerable()</code>, with a <code>ToList()</code> too early in the chain, and with repository methods that return <code>IEnumerable&lt;T&gt;</code> or <code>List&lt;T&gt;</code> when callers still need to filter.</p>
 
-<h2>Client evaluation</h2>
+<h2 id="client-evaluation">Client evaluation</h2>
 <p>EF Core 3.0 and later throw an exception if a <code>Where</code> or <code>OrderBy</code> contains something that can't be translated to SQL. That's good: it stops accidental full-table downloads.</p>
 
 <pre><code class="language-csharp">// Throws InvalidOperationException: &quot;The LINQ expression ... could not be translated&quot;
@@ -101,7 +109,7 @@ static bool IsVip(Customer c) =&gt; c.Email.EndsWith(&quot;@bigcorp.com&quot;);<
 <div class="callout info"><span class="title">Explicit client evaluation</span>
 If you really must evaluate something in memory, make it obvious: filter as much as possible in SQL, then call <code>AsEnumerable()</code> or <code>ToListAsync()</code>, then apply the client-side logic.</div>
 
-<h2>Picking the right operator</h2>
+<h2 id="picking-the-right-operator">Picking the right operator</h2>
 <table>
   <thead><tr><th scope="col">You want…</th><th scope="col">Use</th><th scope="col">Avoid</th></tr></thead>
   <tbody>
@@ -114,7 +122,7 @@ If you really must evaluate something in memory, make it obvious: filter as much
   </tbody>
 </table>
 
-<h2>Async: scalability, not speed</h2>
+<h2 id="async-scalability-not-speed">Async: scalability, not speed</h2>
 <p>Async queries (<code>ToListAsync</code>, <code>FirstOrDefaultAsync</code>, <code>SaveChangesAsync</code>) don't make a single query faster. They free the thread while waiting on I/O, so a web server can handle more concurrent requests with fewer threads. Use async in web apps and services, and pass the <code>CancellationToken</code> through so abandoned requests stop their queries.</p>
 
 <pre><code class="language-csharp">app.MapGet(&quot;/customers/{id:int}/orders&quot;, async (int id, ShopContext db, CancellationToken ct) =&gt;
@@ -123,7 +131,7 @@ If you really must evaluate something in memory, make it obvious: filter as much
 <div class="callout warn"><span class="title">Known SqlClient caveat</span>
 With <code>Microsoft.Data.SqlClient</code>, reading very large text or binary columns (several MB of <code>nvarchar(max)</code> or <code>varbinary(max)</code>) <i>asynchronously</i> has been much slower than reading them synchronously. If you hit this, project those columns away, or read them separately in sync code.</div>
 
-<h2>Buffering vs streaming</h2>
+<h2 id="buffering-vs-streaming">Buffering vs streaming</h2>
 <p><code>ToListAsync()</code> <b>buffers</b>: all rows are loaded into memory before you see the first one. To process a large result set row by row with constant memory, <b>stream</b> it:</p>
 
 <pre><code class="language-csharp">await foreach (var order in db.Orders.AsNoTracking().Where(o =&gt; o.Status == OrderStatus.Paid).AsAsyncEnumerable())
@@ -133,7 +141,7 @@ With <code>Microsoft.Data.SqlClient</code>, reading very large text or binary co
 <p>Streaming keeps the connection open for the whole loop. Keep the loop body fast, and don't run other queries on the same context inside it unless MARS is enabled. Streaming with tracking still accumulates entities in the change tracker, so use <code>AsNoTracking()</code> (Lesson 10).</p>
 
 <div class="takeaways">
-  <h2 class="box-title">🔑 Key takeaways</h2>
+  <h2 class="box-title" id="key-takeaways">🔑 Key takeaways</h2>
   <ul>
     <li>Queries are deferred: nothing runs until enumeration, and every enumeration runs the query again.</li>
     <li>Stay on <code>IQueryable</code> until filtering, sorting and aggregation are expressed. <code>IEnumerable</code> switches to in-memory LINQ.</li>
@@ -142,9 +150,9 @@ With <code>Microsoft.Data.SqlClient</code>, reading very large text or binary co
   </ul>
 </div>
 
-<h2>Exercise</h2>
+<h2 id="exercise">Exercise</h2>
 <div class="exercise">
-  <h3 class="box-title">🛠 Spot the hidden queries</h3>
+  <h3 class="box-title" id="spot-the-hidden-queries">🛠 Spot the hidden queries</h3>
   <p>How many SQL queries does this code run, and how much data does it fetch? Rewrite it.</p>
 
 <pre><code class="language-csharp">public List&lt;Customer&gt; GetCustomers() =&gt; db.Customers.ToList();
@@ -165,7 +173,7 @@ var total  = await db.Orders.Where(o =&gt; o.Status == OrderStatus.Paid)
   </details>
 </div>
 
-<h2>Quiz</h2>
+<h2 id="quiz">Quiz</h2>
 
 <div class="quiz" data-answer="b">
 <p class="q">A method returns <code>IEnumerable&lt;Order&gt;</code> from <code>db.Orders</code>. The caller adds <code>.Where(o =&gt; o.Total &gt; 100)</code>. Where does the filter run?</p>
@@ -200,12 +208,13 @@ var total  = await db.Orders.Where(o =&gt; o.Status == OrderStatus.Paid)
 <p class="explain">Async improves throughput under concurrency, not single-query latency.</p>
 </div>
 
-<h2>Further reading</h2>
+<h2 id="further-reading">Further reading</h2>
 <ul>
   <li><a href="https://learn.microsoft.com/ef/core/querying/client-eval" target="_blank" rel="noopener">Client vs server evaluation</a></li>
   <li><a href="https://learn.microsoft.com/ef/core/performance/efficient-querying" target="_blank" rel="noopener">Efficient querying</a></li>
   <li><a href="https://learn.microsoft.com/ef/core/miscellaneous/async" target="_blank" rel="noopener">Asynchronous programming</a></li>
 </ul>
+<p class="reviewed">Last reviewed October 2026 against EF Core 10 (LTS). Spotted an error? Select it, right-click, and ask the AI tutor to double-check it, or open an issue in the repository.</p>
 </article>
 <nav id="pager" aria-label="Lesson navigation"></nav>
 </main>

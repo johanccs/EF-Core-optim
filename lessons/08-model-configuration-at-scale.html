@@ -2,15 +2,23 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src https:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Model Configuration at Scale · EF Core Optimization Course</title>
-<meta name="description" content="Model Configuration at Scale: a lesson from the EF Core Optimization Course.">
+<meta name="description" content="Configuring five entities is easy. Configuring two hundred consistently is a design problem. This lesson covers organizing model configuration so it stays correct, reviewable and uniform as the model grows.">
+<meta property="og:title" content="Model Configuration at Scale">
+<meta property="og:description" content="Configuring five entities is easy. Configuring two hundred consistently is a design problem. This lesson covers organizing model configuration so it stays correct, reviewable and uniform as the model grows.">
+<meta property="og:type" content="article">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="../assets/css/course.css">
+<script src="../assets/js/theme-init.js"></script>
 </head>
 <body data-lesson="8" data-root="../">
+<a class="skip-link" href="#main">Skip to content</a>
 <div class="layout">
 <nav id="sidebar" aria-label="Lessons"></nav>
-<main class="content">
+<main class="content" id="main">
+<noscript><p class="callout warn">Navigation, quizzes and progress tracking need JavaScript. The lesson text below still works without it.</p></noscript>
 <article>
 <h1>Model Configuration at Scale</h1>
 <p class="lead">Configuring five entities is easy. Configuring two hundred consistently is a design problem. This lesson covers organizing model configuration so it stays correct, reviewable and uniform as the model grows.</p>
@@ -23,7 +31,7 @@
 </div>
 
 <div class="objectives">
-  <h2 class="box-title">By the end of this lesson you will be able to</h2>
+  <h2 class="box-title" id="by-the-end-of-this-lesson-you-will-be-able-to">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Explain configuration precedence: conventions, data annotations, Fluent API.</li>
     <li>Organize configuration with <code>IEntityTypeConfiguration&lt;T&gt;</code> and shared base configurations.</li>
@@ -33,7 +41,7 @@
   </ul>
 </div>
 
-<h2>Precedence: who wins?</h2>
+<h2 id="precedence-who-wins">Precedence: who wins?</h2>
 <p>EF builds the model in layers. Later, more explicit layers override earlier ones:</p>
 <ol>
   <li><b>Pre-convention configuration</b> (<code>ConfigureConventions</code>): defaults for types, applied before conventions run.</li>
@@ -44,7 +52,7 @@
 <div class="callout tip"><span class="title">Pick one primary style</span>
 Mixing annotations and Fluent API for the same concern makes it hard to know what's actually configured. Common team rule: use the Fluent API for everything persistence-related, and keep entities free of EF attributes.</div>
 
-<h2>Organizing configuration</h2>
+<h2 id="organizing-configuration">Organizing configuration</h2>
 
 <pre><code class="language-plaintext">Shop.Data/
   ShopContext.cs
@@ -85,7 +93,7 @@ public sealed class OrderConfiguration : AuditableConfiguration&lt;Order&gt;
 // ShopContext.OnModelCreating
 modelBuilder.ApplyConfigurationsFromAssembly(typeof(ShopContext).Assembly);</code></pre>
 
-<h2>Model-wide rules with ConfigureConventions</h2>
+<h2 id="model-wide-rules-with-configureconventions">Model-wide rules with ConfigureConventions</h2>
 
 <pre><code class="language-csharp">protected override void ConfigureConventions(ModelConfigurationBuilder c)
 {
@@ -108,7 +116,7 @@ public readonly record struct CustomerId(int Value);
 public sealed class CustomerIdConverter() : ValueConverter&lt;CustomerId, int&gt;(id =&gt; id.Value, v =&gt; new CustomerId(v));</code></pre>
 <p>Per-property Fluent configuration still overrides these defaults, so <code>Product.Description</code> can use <code>HasMaxLength(4000)</code> while every other string defaults to 256.</p>
 
-<h2>Schemas, naming and database-generated values</h2>
+<h2 id="schemas-naming-and-database-generated-values">Schemas, naming and database-generated values</h2>
 
 <pre><code class="language-csharp">modelBuilder.HasDefaultSchema(&quot;shop&quot;);                                  // all tables → shop.*
 
@@ -125,9 +133,9 @@ modelBuilder.Entity&lt;OrderLine&gt;()
 <div class="callout warn"><span class="title">Defaults and the CLR default value</span>
 When a property has a database default, EF only omits it from the INSERT if the property still holds its <b>CLR default</b> (0, null, the first enum member…). If that CLR default is also a valid value you want to save, configure a different <i>sentinel</i> with <code>HasSentinel</code> (EF 8+), or make the property nullable.</div>
 
-<h2>Seed data: HasData vs UseSeeding</h2>
+<h2 id="seed-data-hasdata-vs-useseeding">Seed data: HasData vs UseSeeding</h2>
 <table>
-  <thead><tr><th scope="col"></th><th scope="col"><code>HasData</code> (model-managed)</th><th scope="col"><code>UseSeeding</code> / <code>UseAsyncSeeding</code> (EF 9+)</th></tr></thead>
+  <thead><tr><th scope="col">Aspect</th><th scope="col"><code>HasData</code> (model-managed)</th><th scope="col"><code>UseSeeding</code> / <code>UseAsyncSeeding</code> (EF 9+)</th></tr></thead>
   <tbody>
   <tr><td>How it works</td><td>Seed rows become part of the model. Migrations generate INSERT, UPDATE and DELETE statements to keep them in sync.</td><td>Your code runs during <code>Migrate()</code>, <code>EnsureCreated()</code> and <code>dotnet ef database update</code>.</td></tr>
   <tr><td>Keys</td><td>Must be specified explicitly</td><td>Any logic you like</td></tr>
@@ -159,7 +167,7 @@ options.UseSqlServer(connStr)
         }
     });</code></pre>
 
-<h2>Inspecting the result</h2>
+<h2 id="inspecting-the-result">Inspecting the result</h2>
 <ul>
   <li><code>db.Model.ToDebugString()</code> prints every entity, property, column type, key, index and relationship EF ended up with.</li>
   <li><code>dotnet ef dbcontext info</code> shows the provider, database and context options.</li>
@@ -167,7 +175,7 @@ options.UseSqlServer(connStr)
 </ul>
 
 <div class="takeaways">
-  <h2 class="box-title">🔑 Key takeaways</h2>
+  <h2 class="box-title" id="key-takeaways">🔑 Key takeaways</h2>
   <ul>
     <li>Precedence: pre-convention configuration &lt; conventions &lt; data annotations &lt; Fluent API.</li>
     <li>Organize with <code>IEntityTypeConfiguration&lt;T&gt;</code> and shared base configurations. Apply model-wide rules in <code>ConfigureConventions</code>.</li>
@@ -176,9 +184,9 @@ options.UseSqlServer(connStr)
   </ul>
 </div>
 
-<h2>Exercise</h2>
+<h2 id="exercise">Exercise</h2>
 <div class="exercise">
-  <h3 class="box-title">🛠 Make it consistent</h3>
+  <h3 class="box-title" id="make-it-consistent">🛠 Make it consistent</h3>
   <ol>
     <li>Introduce <code>IAuditable</code> and <code>AuditableConfiguration&lt;T&gt;</code>, and apply them to Order and Customer.</li>
     <li>Add <code>ConfigureConventions</code> rules for strings, decimals and enums-as-strings. Generate a migration and review every changed column.</li>
@@ -187,7 +195,7 @@ options.UseSqlServer(connStr)
   </ol>
 </div>
 
-<h2>Quiz</h2>
+<h2 id="quiz">Quiz</h2>
 
 <div class="quiz" data-answer="c">
 <p class="q">A property has <code>[MaxLength(50)]</code> and <code>HasMaxLength(100)</code> in <code>OnModelCreating</code>. Which applies?</p>
@@ -222,13 +230,14 @@ options.UseSqlServer(connStr)
 <p class="explain">Pre-convention configuration applies type-wide defaults in one place.</p>
 </div>
 
-<h2>Further reading</h2>
+<h2 id="further-reading">Further reading</h2>
 <ul>
   <li><a href="https://learn.microsoft.com/ef/core/modeling/" target="_blank" rel="noopener">Creating and configuring a model</a></li>
   <li><a href="https://learn.microsoft.com/ef/core/modeling/bulk-configuration" target="_blank" rel="noopener">Model bulk configuration</a></li>
   <li><a href="https://learn.microsoft.com/ef/core/modeling/data-seeding" target="_blank" rel="noopener">Data seeding</a></li>
   <li><a href="https://learn.microsoft.com/ef/core/modeling/generated-properties" target="_blank" rel="noopener">Generated values</a></li>
 </ul>
+<p class="reviewed">Last reviewed October 2026 against EF Core 10 (LTS). Spotted an error? Select it, right-click, and ask the AI tutor to double-check it, or open an issue in the repository.</p>
 </article>
 <nav id="pager" aria-label="Lesson navigation"></nav>
 </main>

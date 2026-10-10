@@ -121,7 +121,7 @@ When a property has a database default, EF only omits it from the INSERT if the 
 
 <h2>Seed data: HasData vs UseSeeding</h2>
 <table>
-  <tr><th></th><th><code>HasData</code> (model-managed)</th><th><code>UseSeeding</code> / <code>UseAsyncSeeding</code> (EF 9+)</th></tr>
+  <tr><th>Aspect</th><th><code>HasData</code> (model-managed)</th><th><code>UseSeeding</code> / <code>UseAsyncSeeding</code> (EF 9+)</th></tr>
   <tr><td>How it works</td><td>Seed rows become part of the model. Migrations generate INSERT, UPDATE and DELETE statements to keep them in sync.</td><td>Your code runs during <code>Migrate()</code>, <code>EnsureCreated()</code> and <code>dotnet ef database update</code>.</td></tr>
   <tr><td>Keys</td><td>Must be specified explicitly</td><td>Any logic you like</td></tr>
   <tr><td>Best for</td><td>Small, static reference data: countries, statuses, categories</td><td>Larger or computed data, data depending on other data, dev and test data</td></tr>

@@ -2,15 +2,23 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src https:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Concurrency, Transactions &amp;amp; Resiliency · EF Core Optimization Course</title>
-<meta name="description" content="Concurrency, Transactions &amp;amp; Resiliency: a lesson from the EF Core Optimization Course.">
+<title>Concurrency, Transactions &amp; Resiliency · EF Core Optimization Course</title>
+<meta name="description" content="Fast code that loses updates or falls over on a transient network blip isn&#x27;t production-ready. This lesson covers optimistic concurrency, transaction scope and isolation, and connection resiliency, all with performance in mind.">
+<meta property="og:title" content="Concurrency, Transactions &amp; Resiliency">
+<meta property="og:description" content="Fast code that loses updates or falls over on a transient network blip isn&#x27;t production-ready. This lesson covers optimistic concurrency, transaction scope and isolation, and connection resiliency, all with performance in mind.">
+<meta property="og:type" content="article">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="../assets/css/course.css">
+<script src="../assets/js/theme-init.js"></script>
 </head>
 <body data-lesson="17" data-root="../">
+<a class="skip-link" href="#main">Skip to content</a>
 <div class="layout">
 <nav id="sidebar" aria-label="Lessons"></nav>
-<main class="content">
+<main class="content" id="main">
+<noscript><p class="callout warn">Navigation, quizzes and progress tracking need JavaScript. The lesson text below still works without it.</p></noscript>
 <article>
 <h1>Concurrency, Transactions &amp; Resiliency</h1>
 <p class="lead">Fast code that loses updates or falls over on a transient network blip isn't production-ready. This lesson covers optimistic concurrency, transaction scope and isolation, and connection resiliency, all with performance in mind.</p>
@@ -23,7 +31,7 @@
 </div>
 
 <div class="objectives">
-  <h2 class="box-title">By the end of this lesson you will be able to</h2>
+  <h2 class="box-title" id="by-the-end-of-this-lesson-you-will-be-able-to">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Implement optimistic concurrency with row versions and concurrency tokens.</li>
     <li>Resolve <code>DbUpdateConcurrencyException</code> correctly.</li>
@@ -32,7 +40,7 @@
   </ul>
 </div>
 
-<h2>Optimistic concurrency</h2>
+<h2 id="optimistic-concurrency">Optimistic concurrency</h2>
 <p>Pessimistic locking (holding locks while a user edits) kills throughput. EF uses <b>optimistic concurrency</b>: it assumes conflicts are rare, includes a version check in the <code>UPDATE</code>, and throws if someone else changed the row first.</p>
 
 <pre><code class="language-csharp">public class Product
@@ -56,7 +64,7 @@ WHERE [Id] = @p1 AND [RowVersion] = @p2;</code></pre>
 <li><b>SQLite and others</b>: use a regular column as a concurrency token, <code>.IsConcurrencyToken()</code>, and update it yourself (e.g. a <code>Guid Version</code> you regenerate on each save).</li>
 </ul></div>
 
-<h3>Handling conflicts</h3>
+<h3 id="handling-conflicts">Handling conflicts</h3>
 
 <pre><code class="language-csharp">const int maxAttempts = 3;
 for (var attempt = 1; ; attempt++)
@@ -89,7 +97,7 @@ product.Price = dto.Price;
 try { await db.SaveChangesAsync(); }
 catch (DbUpdateConcurrencyException) { return Results.Conflict(); }</code></pre>
 
-<h2>Transactions</h2>
+<h2 id="transactions">Transactions</h2>
 <p>Each <code>SaveChanges</code> call is already atomic. Use an explicit transaction only when <b>several operations</b> must succeed or fail together: multiple SaveChanges calls, <code>ExecuteUpdate</code> combined with SaveChanges, or raw SQL.</p>
 
 <pre><code class="language-csharp">await using var tx = await db.Database.BeginTransactionAsync();
@@ -104,13 +112,13 @@ await tx.CommitAsync();           // disposing without commit = rollback</code><
 <div class="callout warn"><span class="title">Keep transactions short</span>
 Locks are held until commit. Never await HTTP calls, message brokers or user input inside a transaction. Do the slow work first, then open the transaction, write and commit. Long transactions are a top cause of blocking and deadlocks.</div>
 
-<h3>Isolation levels and blocking</h3>
+<h3 id="isolation-levels-and-blocking">Isolation levels and blocking</h3>
 <p>The default isolation level on SQL Server is <code>READ COMMITTED</code>, where readers can block writers and vice versa. Many high-throughput SQL Server systems enable <b>Read Committed Snapshot Isolation</b> (RCSI) at the database level. Readers then see the last committed version without taking shared locks, which removes most reader/writer blocking. It's the default on Azure SQL Database.</p>
 
 <pre><code class="language-sql">ALTER DATABASE Shop SET READ_COMMITTED_SNAPSHOT ON;</code></pre>
 <p>Request a specific isolation level per transaction if you need one: <code>BeginTransactionAsync(IsolationLevel.Serializable)</code>. PostgreSQL uses MVCC, so readers never block writers by default.</p>
 
-<h2>Connection resiliency</h2>
+<h2 id="connection-resiliency">Connection resiliency</h2>
 <p>Cloud databases have transient failures: failovers, throttling, dropped connections. EF's <b>execution strategies</b> retry automatically:</p>
 
 <pre><code class="language-csharp">options.UseSqlServer(connStr, sql =&gt; sql.EnableRetryOnFailure(
@@ -134,7 +142,7 @@ await strategy.ExecuteAsync(async () =&gt;
 <p>The delegate may run more than once, so make it <b>idempotent</b>. Don't, for example, add entities to the context outside the delegate and then retry. Create or attach them inside it.</p>
 
 <div class="takeaways">
-  <h2 class="box-title">🔑 Key takeaways</h2>
+  <h2 class="box-title" id="key-takeaways">🔑 Key takeaways</h2>
   <ul>
     <li>Optimistic concurrency (row version or concurrency token) prevents lost updates without locks.</li>
     <li>Handle <code>DbUpdateConcurrencyException</code> explicitly: retry a bounded number of times, merge, or return 409.</li>
@@ -143,9 +151,9 @@ await strategy.ExecuteAsync(async () =&gt;
   </ul>
 </div>
 
-<h2>Exercise</h2>
+<h2 id="exercise">Exercise</h2>
 <div class="exercise">
-  <h3 class="box-title">🛠 Simulate a lost update</h3>
+  <h3 class="box-title" id="simulate-a-lost-update">🛠 Simulate a lost update</h3>
   <ol>
     <li>Without a concurrency token, open two contexts, load the same product in each, change the price differently, and save both. Which value wins? (The last writer silently overwrites.)</li>
     <li>Add <code>[Timestamp] RowVersion</code>, migrate, and repeat. Catch the exception and implement "database wins".</li>
@@ -153,7 +161,7 @@ await strategy.ExecuteAsync(async () =&gt;
   </ol>
 </div>
 
-<h2>Quiz</h2>
+<h2 id="quiz">Quiz</h2>
 
 <div class="quiz" data-answer="d">
 <p class="q">What does EF Core do when an optimistic concurrency check fails?</p>
@@ -188,12 +196,13 @@ await strategy.ExecuteAsync(async () =&gt;
 <p class="explain">RCSI uses row versioning so readers don't take shared locks. NOLOCK risks dirty and inconsistent reads.</p>
 </div>
 
-<h2>Further reading</h2>
+<h2 id="further-reading">Further reading</h2>
 <ul>
   <li><a href="https://learn.microsoft.com/ef/core/saving/concurrency" target="_blank" rel="noopener">Handling concurrency conflicts</a></li>
   <li><a href="https://learn.microsoft.com/ef/core/saving/transactions" target="_blank" rel="noopener">Using transactions</a></li>
   <li><a href="https://learn.microsoft.com/ef/core/miscellaneous/connection-resiliency" target="_blank" rel="noopener">Connection resiliency</a></li>
 </ul>
+<p class="reviewed">Last reviewed October 2026 against EF Core 10 (LTS). Spotted an error? Select it, right-click, and ask the AI tutor to double-check it, or open an issue in the repository.</p>
 </article>
 <nav id="pager" aria-label="Lesson navigation"></nav>
 </main>

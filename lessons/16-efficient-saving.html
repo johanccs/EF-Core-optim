@@ -2,15 +2,23 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src https:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Efficient Saving &amp;amp; Bulk Operations · EF Core Optimization Course</title>
-<meta name="description" content="Efficient Saving &amp;amp; Bulk Operations: a lesson from the EF Core Optimization Course.">
+<title>Efficient Saving &amp; Bulk Operations · EF Core Optimization Course</title>
+<meta name="description" content="Reads get most of the attention, but slow writes hurt just as much. This lesson covers how SaveChanges batches work, set-based updates and deletes with ExecuteUpdate / ExecuteDelete , key generation strategies, and true bulk loading.">
+<meta property="og:title" content="Efficient Saving &amp; Bulk Operations">
+<meta property="og:description" content="Reads get most of the attention, but slow writes hurt just as much. This lesson covers how SaveChanges batches work, set-based updates and deletes with ExecuteUpdate / ExecuteDelete , key generation strategies, and true bulk loading.">
+<meta property="og:type" content="article">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="../assets/css/course.css">
+<script src="../assets/js/theme-init.js"></script>
 </head>
 <body data-lesson="16" data-root="../">
+<a class="skip-link" href="#main">Skip to content</a>
 <div class="layout">
 <nav id="sidebar" aria-label="Lessons"></nav>
-<main class="content">
+<main class="content" id="main">
+<noscript><p class="callout warn">Navigation, quizzes and progress tracking need JavaScript. The lesson text below still works without it.</p></noscript>
 <article>
 <h1>Efficient Saving &amp; Bulk Operations</h1>
 <p class="lead">Reads get most of the attention, but slow writes hurt just as much. This lesson covers how <code>SaveChanges</code> batches work, set-based updates and deletes with <code>ExecuteUpdate</code>/<code>ExecuteDelete</code>, key generation strategies, and true bulk loading.</p>
@@ -23,7 +31,7 @@
 </div>
 
 <div class="objectives">
-  <h2 class="box-title">By the end of this lesson you will be able to</h2>
+  <h2 class="box-title" id="by-the-end-of-this-lesson-you-will-be-able-to">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Avoid per-row round trips by letting EF batch changes.</li>
     <li>Update and delete many rows without loading them, using <code>ExecuteUpdateAsync</code> and <code>ExecuteDeleteAsync</code>.</li>
@@ -32,7 +40,7 @@
   </ul>
 </div>
 
-<h2>SaveChanges batching</h2>
+<h2 id="savechanges-batching">SaveChanges batching</h2>
 <p><code>SaveChanges</code> collects every pending change and sends the commands <b>in batches</b>, many statements per round trip, inside one transaction.</p>
 
 <div class="compare">
@@ -63,7 +71,7 @@ await db.SaveChangesAsync();</code></pre>
 <li><b>Triggers</b>: SQL Server doesn't allow <code>OUTPUT</code> without <code>INTO</code> on tables with triggers. Declare them so EF uses a compatible, slightly slower SQL form: <code>b.ToTable(t =&gt; t.HasTrigger("TR_Orders_Audit"));</code></li>
 </ul></div>
 
-<h3>Large imports: chunk and clear</h3>
+<h3 id="large-imports-chunk-and-clear">Large imports: chunk and clear</h3>
 <p>Adding 1,000,000 entities to a single context makes the change tracker huge and <code>DetectChanges</code> slow. Process in chunks:</p>
 
 <pre><code class="language-csharp">foreach (var chunk in rows.Chunk(5_000))
@@ -74,7 +82,7 @@ await db.SaveChangesAsync();</code></pre>
 }</code></pre>
 <p>If you change many tracked entities in a hot loop, <code>db.ChangeTracker.AutoDetectChangesEnabled = false</code> prevents repeated scans. Re-enable it, or call <code>DetectChanges()</code> manually, before saving.</p>
 
-<h2>ExecuteUpdate and ExecuteDelete</h2>
+<h2 id="executeupdate-and-executedelete">ExecuteUpdate and ExecuteDelete</h2>
 <p>To change many rows, the traditional approach is load, modify, save: N rows loaded and N <code>UPDATE</code> statements. Since EF Core 7 you can issue a <b>single set-based SQL statement</b> directly from LINQ:</p>
 
 <pre><code class="language-csharp">// Raise prices 10% in one category: one UPDATE, zero rows loaded
@@ -114,7 +122,7 @@ EF 10 also supports updating properties inside JSON columns mapped as complex ty
 <li>Cascade deletes configured only in EF (not in the database) don't happen.</li>
 </ul></div>
 
-<h2>Key generation: IDENTITY vs HiLo vs sequences</h2>
+<h2 id="key-generation-identity-vs-hilo-vs-sequences">Key generation: IDENTITY vs HiLo vs sequences</h2>
 <p>With <code>IDENTITY</code> columns, the database generates keys, and EF reads them back. With HiLo, EF reserves a block of keys from a database sequence and assigns them <b>client-side</b>. Keys are then known before <code>SaveChanges</code>, and EF fetches a new block only occasionally.</p>
 
 <pre><code class="language-csharp">modelBuilder.Entity&lt;Order&gt;()
@@ -125,7 +133,7 @@ EF 10 also supports updating properties inside JSON columns mapped as complex ty
 modelBuilder.UseHiLo();</code></pre>
 <p>HiLo is helpful when you need ids before saving, for example to build related graphs or publish messages, and in some high-volume insert scenarios. Its downsides are gaps in key values and a database sequence to manage. For most apps <code>IDENTITY</code> is fine. Measure before switching.</p>
 
-<h2>True bulk loading</h2>
+<h2 id="true-bulk-loading">True bulk loading</h2>
 <p>For hundreds of thousands of rows, even batched <code>INSERT</code> statements are slow compared with the database's native bulk path:</p>
 <table>
   <thead><tr><th scope="col">Option</th><th scope="col">Notes</th></tr></thead>
@@ -147,7 +155,7 @@ bulk.ColumnMappings.Add(nameof(Product.Name), &quot;Name&quot;);
 await bulk.WriteToServerAsync(dataTableOrDataReader);</code></pre>
 
 <div class="takeaways">
-  <h2 class="box-title">🔑 Key takeaways</h2>
+  <h2 class="box-title" id="key-takeaways">🔑 Key takeaways</h2>
   <ul>
     <li>Never call <code>SaveChanges</code> in a loop. Let EF batch changes, and chunk very large imports.</li>
     <li><code>ExecuteUpdateAsync</code>/<code>ExecuteDeleteAsync</code> change many rows in one statement without loading them.</li>
@@ -156,9 +164,9 @@ await bulk.WriteToServerAsync(dataTableOrDataReader);</code></pre>
   </ul>
 </div>
 
-<h2>Exercise</h2>
+<h2 id="exercise">Exercise</h2>
 <div class="exercise">
-  <h3 class="box-title">🛠 Four ways to write</h3>
+  <h3 class="box-title" id="four-ways-to-write">🛠 Four ways to write</h3>
   <p>Insert 50,000 products and time each approach:</p>
   <ol>
     <li><code>Add</code> + <code>SaveChanges</code> per row</li>
@@ -172,7 +180,7 @@ await bulk.WriteToServerAsync(dataTableOrDataReader);</code></pre>
   </details>
 </div>
 
-<h2>Quiz</h2>
+<h2 id="quiz">Quiz</h2>
 
 <div class="quiz" data-answer="c">
 <p class="q">When does <code>ExecuteDeleteAsync()</code> run its SQL?</p>
@@ -207,12 +215,13 @@ await bulk.WriteToServerAsync(dataTableOrDataReader);</code></pre>
 <p class="explain">Without it, SaveChanges fails on tables with triggers (EF Core 7+).</p>
 </div>
 
-<h2>Further reading</h2>
+<h2 id="further-reading">Further reading</h2>
 <ul>
   <li><a href="https://learn.microsoft.com/ef/core/performance/efficient-updating" target="_blank" rel="noopener">Efficient updating</a></li>
   <li><a href="https://learn.microsoft.com/ef/core/saving/execute-insert-update-delete" target="_blank" rel="noopener">ExecuteUpdate and ExecuteDelete</a></li>
   <li><a href="https://learn.microsoft.com/ef/core/what-is-new/ef-core-10.0/whatsnew" target="_blank" rel="noopener">What's new in EF Core 10</a></li>
 </ul>
+<p class="reviewed">Last reviewed October 2026 against EF Core 10 (LTS). Spotted an error? Select it, right-click, and ask the AI tutor to double-check it, or open an issue in the repository.</p>
 </article>
 <nav id="pager" aria-label="Lesson navigation"></nav>
 </main>

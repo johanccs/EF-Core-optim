@@ -2,15 +2,23 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src https:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Benchmarking &amp;amp; the Production Checklist · EF Core Optimization Course</title>
-<meta name="description" content="Benchmarking &amp;amp; the Production Checklist: a lesson from the EF Core Optimization Course.">
+<title>Benchmarking &amp; the Production Checklist · EF Core Optimization Course</title>
+<meta name="description" content="The final lesson turns everything into a repeatable practice. You&#x27;ll benchmark EF code properly, protect performance with tests, and finish with a checklist and a capstone project.">
+<meta property="og:title" content="Benchmarking &amp; the Production Checklist">
+<meta property="og:description" content="The final lesson turns everything into a repeatable practice. You&#x27;ll benchmark EF code properly, protect performance with tests, and finish with a checklist and a capstone project.">
+<meta property="og:type" content="article">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="../assets/css/course.css">
+<script src="../assets/js/theme-init.js"></script>
 </head>
 <body data-lesson="25" data-root="../">
+<a class="skip-link" href="#main">Skip to content</a>
 <div class="layout">
 <nav id="sidebar" aria-label="Lessons"></nav>
-<main class="content">
+<main class="content" id="main">
+<noscript><p class="callout warn">Navigation, quizzes and progress tracking need JavaScript. The lesson text below still works without it.</p></noscript>
 <article>
 <h1>Benchmarking &amp; the Production Checklist</h1>
 <p class="lead">The final lesson turns everything into a repeatable practice. You'll benchmark EF code properly, protect performance with tests, and finish with a checklist and a capstone project.</p>
@@ -23,7 +31,7 @@
 </div>
 
 <div class="objectives">
-  <h2 class="box-title">By the end of this lesson you will be able to</h2>
+  <h2 class="box-title" id="by-the-end-of-this-lesson-you-will-be-able-to">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Write reliable micro-benchmarks for EF Core with BenchmarkDotNet.</li>
     <li>Load-test endpoints and interpret the results.</li>
@@ -32,7 +40,7 @@
   </ul>
 </div>
 
-<h2>Benchmarking with BenchmarkDotNet</h2>
+<h2 id="benchmarking-with-benchmarkdotnet">Benchmarking with BenchmarkDotNet</h2>
 <p><code>Stopwatch</code> loops lie. They include JIT time, ignore GC, and suffer from noise. <a href="https://benchmarkdotnet.org/" target="_blank" rel="noopener">BenchmarkDotNet</a> handles warm-up, statistics and memory measurement for you.</p>
 
 <pre data-label="Benchmarks.cs"><code class="language-csharp">using BenchmarkDotNet.Attributes;
@@ -106,7 +114,7 @@ public static class Program
 <li>Remember network latency. A local database hides round-trip costs that dominate in the cloud.</li>
 </ul></div>
 
-<h2>Load testing</h2>
+<h2 id="load-testing">Load testing</h2>
 <p>Micro-benchmarks compare techniques. Load tests show how the whole system behaves under concurrency, including connection pool limits, locks and thread-pool starvation.</p>
 
 <pre data-label="k6 script (load.js)"><code class="language-javascript">import http from &#x27;k6/http&#x27;;
@@ -120,7 +128,7 @@ export default function () {
 }</code></pre>
 <p>Track <b>p95/p99 latency</b> and throughput, not averages, and watch the database side (CPU, waits, blocking) at the same time.</p>
 
-<h2>Guarding against regressions</h2>
+<h2 id="guarding-against-regressions">Guarding against regressions</h2>
 <p>Performance fixes erode as code changes. Lock the important ones in with integration tests, using <a href="https://dotnet.testcontainers.org/" target="_blank" rel="noopener">Testcontainers</a> for a real database:</p>
 
 <pre><code class="language-csharp">public sealed class CommandCounter : DbCommandInterceptor
@@ -157,9 +165,9 @@ public void Product_list_query_does_not_select_description()
     Assert.DoesNotContain(&quot;[Description]&quot;, sql);
 }</code></pre>
 
-<h2>The EF Core performance checklist</h2>
+<h2 id="the-ef-core-performance-checklist">The EF Core performance checklist</h2>
 
-<h3>Configuration</h3>
+<h3 id="configuration">Configuration</h3>
 <ul>
   <li>☐ DbContext is scoped (or created from a factory), never a singleton.</li>
   <li>☐ <code>EnableSensitiveDataLogging</code> and <code>EnableDetailedErrors</code> are off in production.</li>
@@ -173,7 +181,7 @@ public void Product_list_query_does_not_select_description()
   <li>☐ A database readiness health check exists, and liveness doesn't depend on the database.</li>
 </ul>
 
-<h3>Model</h3>
+<h3 id="model">Model</h3>
 <ul>
   <li>☐ Strings have max lengths, non-Unicode where appropriate, and decimals have explicit precision.</li>
   <li>☐ Indexes exist for the WHERE, JOIN and ORDER BY patterns of the hot queries. Composite column order is correct.</li>
@@ -182,7 +190,7 @@ public void Product_list_query_does_not_select_description()
   <li>☐ A compiled model is used for large models, generated automatically.</li>
 </ul>
 
-<h3>Queries</h3>
+<h3 id="queries">Queries</h3>
 <ul>
   <li>☐ Every list endpoint is paged with a server-enforced maximum. Keyset paging is used for deep or infinite lists.</li>
   <li>☐ Read paths use projections or <code>AsNoTracking</code>.</li>
@@ -193,7 +201,7 @@ public void Product_list_query_does_not_select_description()
   <li>☐ Async APIs are used with <code>CancellationToken</code> in web code.</li>
 </ul>
 
-<h3>Writes</h3>
+<h3 id="writes">Writes</h3>
 <ul>
   <li>☐ There's no <code>SaveChanges</code> inside loops. Changes are batched.</li>
   <li>☐ <code>ExecuteUpdate</code>/<code>ExecuteDelete</code> are used for set-based changes.</li>
@@ -202,7 +210,7 @@ public void Product_list_query_does_not_select_description()
   <li>☐ Transactions are short, with no external I/O inside them.</li>
 </ul>
 
-<h3>Operations</h3>
+<h3 id="operations">Operations</h3>
 <ul>
   <li>☐ Slow-query logging, query tags, and OpenTelemetry traces and metrics are in place.</li>
   <li>☐ Query Store or <code>pg_stat_statements</code> is enabled and reviewed regularly.</li>
@@ -211,7 +219,7 @@ public void Product_list_query_does_not_select_description()
 </ul>
 
 <div class="takeaways">
-  <h2 class="box-title">🔑 Key takeaways</h2>
+  <h2 class="box-title" id="key-takeaways">🔑 Key takeaways</h2>
   <ul>
     <li>Benchmark with BenchmarkDotNet, in Release, against the real provider, with realistic data.</li>
     <li>Load test for p95/p99 latency and throughput while watching the database.</li>
@@ -220,9 +228,9 @@ public void Product_list_query_does_not_select_description()
   </ul>
 </div>
 
-<h2>🏆 Capstone project</h2>
+<h2 id="capstone-project">🏆 Capstone project</h2>
 <div class="exercise">
-  <h3 class="box-title">Optimize "SlowShop"</h3>
+  <h3 class="box-title" id="optimize-slowshop">Optimize "SlowShop"</h3>
   <p>Build, or take from your playground, an API with these deliberately slow endpoints, then apply the course:</p>
   <ol>
     <li><b>GET /products?page=N</b>: loads all products with <code>Include(Category)</code>, pages in memory, and returns entities including Description.<br><i>Target: projection, keyset paging, covering index.</i></li>
@@ -234,7 +242,7 @@ public void Product_list_query_does_not_select_description()
   <p>For each endpoint, record <b>before and after</b>: query count, rows read, p95 latency under load, and allocated memory. Write a short report of what you changed and why. That report is evidence you can now tune EF Core in production.</p>
 </div>
 
-<h2>Final quiz</h2>
+<h2 id="final-quiz">Final quiz</h2>
 
 <div class="quiz" data-answer="c">
 <p class="q">Why shouldn't you benchmark EF Core performance with the InMemory provider?</p>
@@ -272,7 +280,7 @@ public void Product_list_query_does_not_select_description()
 <div class="callout tip"><span class="title">🎉 Congratulations</span>
 You've worked through EF Core from first principles to expert tuning. Keep the checklist close, measure before and after each change, and read each release's "What's new" page. Every EF version adds new optimizations and translations.</div>
 
-<h2>Further reading</h2>
+<h2 id="further-reading">Further reading</h2>
 <ul>
   <li><a href="https://learn.microsoft.com/ef/core/performance/" target="_blank" rel="noopener">EF Core performance docs (all sections)</a></li>
   <li><a href="https://benchmarkdotnet.org/articles/overview.html" target="_blank" rel="noopener">BenchmarkDotNet</a></li>
@@ -280,6 +288,7 @@ You've worked through EF Core from first principles to expert tuning. Keep the c
   <li><a href="https://dotnet.testcontainers.org/" target="_blank" rel="noopener">Testcontainers for .NET</a></li>
   <li><a href="https://github.com/dotnet/efcore" target="_blank" rel="noopener">EF Core on GitHub</a></li>
 </ul>
+<p class="reviewed">Last reviewed October 2026 against EF Core 10 (LTS). Spotted an error? Select it, right-click, and ask the AI tutor to double-check it, or open an issue in the repository.</p>
 </article>
 <nav id="pager" aria-label="Lesson navigation"></nav>
 </main>

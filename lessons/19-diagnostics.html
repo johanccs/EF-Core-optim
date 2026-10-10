@@ -2,15 +2,23 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src https:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Diagnosing Performance Problems · EF Core Optimization Course</title>
-<meta name="description" content="Diagnosing Performance Problems: a lesson from the EF Core Optimization Course.">
+<meta name="description" content="Optimization without measurement is guesswork. This lesson builds a diagnostic toolkit, from logs and query tags to execution plans, EF metrics and distributed tracing, so you can find the slow query before your users do.">
+<meta property="og:title" content="Diagnosing Performance Problems">
+<meta property="og:description" content="Optimization without measurement is guesswork. This lesson builds a diagnostic toolkit, from logs and query tags to execution plans, EF metrics and distributed tracing, so you can find the slow query before your users do.">
+<meta property="og:type" content="article">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="../assets/css/course.css">
+<script src="../assets/js/theme-init.js"></script>
 </head>
 <body data-lesson="19" data-root="../">
+<a class="skip-link" href="#main">Skip to content</a>
 <div class="layout">
 <nav id="sidebar" aria-label="Lessons"></nav>
-<main class="content">
+<main class="content" id="main">
+<noscript><p class="callout warn">Navigation, quizzes and progress tracking need JavaScript. The lesson text below still works without it.</p></noscript>
 <article>
 <h1>Diagnosing Performance Problems</h1>
 <p class="lead">Optimization without measurement is guesswork. This lesson builds a diagnostic toolkit, from logs and query tags to execution plans, EF metrics and distributed tracing, so you can find the slow query before your users do.</p>
@@ -23,7 +31,7 @@
 </div>
 
 <div class="objectives">
-  <h2 class="box-title">By the end of this lesson you will be able to</h2>
+  <h2 class="box-title" id="by-the-end-of-this-lesson-you-will-be-able-to">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Follow a repeatable workflow: measure, locate, explain, fix, verify.</li>
     <li>Tag queries so you can trace SQL back to C# code.</li>
@@ -32,7 +40,7 @@
   </ul>
 </div>
 
-<h2>The workflow</h2>
+<h2 id="the-workflow">The workflow</h2>
 <ol>
   <li><b>Measure.</b> Which endpoint or job is slow? Use APM, traces and logs, not intuition.</li>
   <li><b>Locate.</b> Which SQL statements does it run, how many, and how long does each take?</li>
@@ -41,7 +49,7 @@
   <li><b>Verify.</b> Measure again, ideally with a benchmark or load test (Lesson 25).</li>
 </ol>
 
-<h2>1. Command logging with durations</h2>
+<h2 id="s-1-command-logging-with-durations">1. Command logging with durations</h2>
 <p>Every executed command log includes its duration: <code>Executed DbCommand (1,284ms)</code>. In production, keep this category at <code>Warning</code> and log slow commands only, using an interceptor:</p>
 
 <pre><code class="language-csharp">public sealed class SlowQueryInterceptor(ILogger&lt;SlowQueryInterceptor&gt; logger) : DbCommandInterceptor
@@ -65,7 +73,7 @@ builder.Services.AddDbContext&lt;ShopContext&gt;((sp, o) =&gt; o
     .UseSqlServer(connStr)
     .AddInterceptors(sp.GetRequiredService&lt;SlowQueryInterceptor&gt;()));</code></pre>
 
-<h2>2. Query tags: from SQL back to code</h2>
+<h2 id="s-2-query-tags-from-sql-back-to-code">2. Query tags: from SQL back to code</h2>
 <p>When a DBA sends you a slow SQL statement, which C# line produced it? Tag your queries:</p>
 
 <pre><code class="language-csharp">var orders = await db.Orders
@@ -81,7 +89,7 @@ var q = db.Orders.TagWithCallSite().Where(o =&gt; o.Status == OrderStatus.Pendin
 SELECT [o].[Id], ... FROM [Orders] AS [o] WHERE [o].[CustomerId] = @id</code></pre>
 <p>Tags appear in Query Store, Extended Events, <code>pg_stat_statements</code> and your APM tool.</p>
 
-<h2>3. Execution plans</h2>
+<h2 id="s-3-execution-plans">3. Execution plans</h2>
 <p>Copy the SQL (from logs or <code>ToQueryString()</code>), run it in SSMS or Azure Data Studio with <b>Include Actual Execution Plan</b> (or <code>EXPLAIN (ANALYZE, BUFFERS)</code> in PostgreSQL), and look for:</p>
 <table>
   <thead><tr><th scope="col">Plan smell</th><th scope="col">Likely cause</th><th scope="col">Fix</th></tr></thead>
@@ -97,21 +105,21 @@ SELECT [o].[Id], ... FROM [Orders] AS [o] WHERE [o].[CustomerId] = @id</code></p
 <div class="callout info"><span class="title">Parameter sniffing</span>
 SQL Server compiles a plan for the first parameter values it sees and reuses it. That's great for most queries, but bad when data is skewed. A plan built for a customer with 3 orders may be terrible for one with 3 million. Mitigations: Query Store plan forcing, <code>OPTION (RECOMPILE)</code> through an interceptor or raw SQL on specific queries, and SQL Server 2022's Parameter Sensitive Plan optimization.</div>
 
-<h2>4. Database-side tools</h2>
+<h2 id="s-4-database-side-tools">4. Database-side tools</h2>
 <ul>
   <li><b>SQL Server Query Store</b>: top resource-consuming queries over time, plan regressions, forced plans. Enable it on every production database.</li>
   <li><b>DMVs</b>: <code>sys.dm_exec_query_stats</code>, <code>sys.dm_db_missing_index_details</code>, <code>sys.dm_os_wait_stats</code>.</li>
   <li><b>PostgreSQL</b>: <code>pg_stat_statements</code>, <code>auto_explain</code>, <code>EXPLAIN ANALYZE</code>.</li>
 </ul>
 
-<h2>5. EF Core metrics</h2>
+<h2 id="s-5-ef-core-metrics">5. EF Core metrics</h2>
 <p>EF Core publishes runtime metrics under the meter or event source name <code>Microsoft.EntityFrameworkCore</code>. EF Core 9+ uses <code>System.Diagnostics.Metrics</code>, and earlier versions use EventCounters. Watch a running process:</p>
 
 <pre><code class="language-bash">dotnet tool install --global dotnet-counters
 dotnet-counters monitor --counters Microsoft.EntityFrameworkCore -p &lt;PID&gt;</code></pre>
 <p>EF 9+ instruments include <code>microsoft.entityframeworkcore.active_dbcontexts</code>, <code>.queries</code>, <code>.savechanges</code>, <code>.compiled_query_cache_hits</code> / <code>.compiled_query_cache_misses</code>, <code>.optimistic_concurrency_failures</code> and <code>.execution_strategy_operation_failures</code>. The most telling signal is the <b>query cache hit ratio</b>, hits ÷ (hits + misses). After warm-up it should stay close to 100% (see Lesson 21). The legacy event counters show it directly as "Query Cache Hit Rate (%)". A steadily growing active DbContexts count suggests contexts aren't being disposed.</p>
 
-<h2>6. Distributed tracing with OpenTelemetry</h2>
+<h2 id="s-6-distributed-tracing-with-opentelemetry">6. Distributed tracing with OpenTelemetry</h2>
 <p>Traces show each request with its database calls as child spans, which makes N+1 queries and slow statements obvious.</p>
 
 <pre><code class="language-csharp">builder.Services.AddOpenTelemetry()
@@ -126,7 +134,7 @@ dotnet-counters monitor --counters Microsoft.EntityFrameworkCore -p &lt;PID&gt;<
 <p>Send the data to .NET Aspire's dashboard locally, or to Jaeger, Grafana, Azure Monitor, Datadog or Honeycomb in production.</p>
 
 <div class="takeaways">
-  <h2 class="box-title">🔑 Key takeaways</h2>
+  <h2 class="box-title" id="key-takeaways">🔑 Key takeaways</h2>
   <ul>
     <li>Follow a loop: measure, locate, explain, fix, verify.</li>
     <li>Tag queries (<code>TagWith</code>, <code>TagWithCallSite</code>) so SQL can be traced back to code.</li>
@@ -135,9 +143,9 @@ dotnet-counters monitor --counters Microsoft.EntityFrameworkCore -p &lt;PID&gt;<
   </ul>
 </div>
 
-<h2>Exercise</h2>
+<h2 id="exercise">Exercise</h2>
 <div class="exercise">
-  <h3 class="box-title">🛠 Build your toolkit</h3>
+  <h3 class="box-title" id="build-your-toolkit">🛠 Build your toolkit</h3>
   <ol>
     <li>Add <code>SlowQueryInterceptor</code> with a 50 ms threshold to the playground, and run a deliberately bad query (e.g. <code>Name.Contains</code> on 1M rows).</li>
     <li>Tag three queries with <code>TagWithCallSite()</code> and find them in the log output.</li>
@@ -146,7 +154,7 @@ dotnet-counters monitor --counters Microsoft.EntityFrameworkCore -p &lt;PID&gt;<
   </ol>
 </div>
 
-<h2>Quiz</h2>
+<h2 id="quiz">Quiz</h2>
 
 <div class="quiz" data-answer="b">
 <p class="q">What does <code>TagWithCallSite()</code> add to the generated SQL?</p>
@@ -181,13 +189,14 @@ dotnet-counters monitor --counters Microsoft.EntityFrameworkCore -p &lt;PID&gt;<
 <p class="explain">A low hit rate points to query cache pollution (Lesson 21).</p>
 </div>
 
-<h2>Further reading</h2>
+<h2 id="further-reading">Further reading</h2>
 <ul>
   <li><a href="https://learn.microsoft.com/ef/core/performance/performance-diagnosis" target="_blank" rel="noopener">Performance diagnosis</a></li>
   <li><a href="https://learn.microsoft.com/ef/core/logging-events-diagnostics/metrics" target="_blank" rel="noopener">EF Core metrics</a></li>
   <li><a href="https://learn.microsoft.com/ef/core/querying/tags" target="_blank" rel="noopener">Query tags</a></li>
   <li><a href="https://learn.microsoft.com/sql/relational-databases/performance/monitoring-performance-by-using-the-query-store" target="_blank" rel="noopener">SQL Server Query Store</a></li>
 </ul>
+<p class="reviewed">Last reviewed October 2026 against EF Core 10 (LTS). Spotted an error? Select it, right-click, and ask the AI tutor to double-check it, or open an issue in the repository.</p>
 </article>
 <nav id="pager" aria-label="Lesson navigation"></nav>
 </main>

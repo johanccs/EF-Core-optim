@@ -2,15 +2,23 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src https:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Raw SQL, Views &amp;amp; Stored Procedures · EF Core Optimization Course</title>
-<meta name="description" content="Raw SQL, Views &amp;amp; Stored Procedures: a lesson from the EF Core Optimization Course.">
+<title>Raw SQL, Views &amp; Stored Procedures · EF Core Optimization Course</title>
+<meta name="description" content="LINQ covers most queries, but sometimes hand-written SQL is the best tool: window functions, provider-specific features, hints, or tuned reporting queries. This lesson covers dropping down to SQL safely while keeping EF&#x27;s benefits.">
+<meta property="og:title" content="Raw SQL, Views &amp; Stored Procedures">
+<meta property="og:description" content="LINQ covers most queries, but sometimes hand-written SQL is the best tool: window functions, provider-specific features, hints, or tuned reporting queries. This lesson covers dropping down to SQL safely while keeping EF&#x27;s benefits.">
+<meta property="og:type" content="article">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="../assets/css/course.css">
+<script src="../assets/js/theme-init.js"></script>
 </head>
 <body data-lesson="18" data-root="../">
+<a class="skip-link" href="#main">Skip to content</a>
 <div class="layout">
 <nav id="sidebar" aria-label="Lessons"></nav>
-<main class="content">
+<main class="content" id="main">
+<noscript><p class="callout warn">Navigation, quizzes and progress tracking need JavaScript. The lesson text below still works without it.</p></noscript>
 <article>
 <h1>Raw SQL, Views &amp; Stored Procedures</h1>
 <p class="lead">LINQ covers most queries, but sometimes hand-written SQL is the best tool: window functions, provider-specific features, hints, or tuned reporting queries. This lesson covers dropping down to SQL safely while keeping EF's benefits.</p>
@@ -23,7 +31,7 @@
 </div>
 
 <div class="objectives">
-  <h2 class="box-title">By the end of this lesson you will be able to</h2>
+  <h2 class="box-title" id="by-the-end-of-this-lesson-you-will-be-able-to">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Query entities with <code>FromSql</code> and compose LINQ on top.</li>
     <li>Query unmapped types and scalars with <code>Database.SqlQuery&lt;T&gt;</code>.</li>
@@ -33,7 +41,7 @@
   </ul>
 </div>
 
-<h2>FromSql: entities from SQL</h2>
+<h2 id="fromsql-entities-from-sql">FromSql: entities from SQL</h2>
 <p><code>FromSql</code> (EF Core 7+) takes an <b>interpolated string</b> and turns every interpolated value into a <b>DbParameter</b>. It's safe by construction.</p>
 
 <pre><code class="language-csharp">var minPrice = 50m;
@@ -42,7 +50,7 @@ var products = await db.Products
     .AsNoTracking()
     .ToListAsync();</code></pre>
 
-<h3>Composing LINQ over SQL</h3>
+<h3 id="composing-linq-over-sql">Composing LINQ over SQL</h3>
 <p>If the SQL is a composable <code>SELECT</code>, EF wraps it in a subquery so you can keep filtering, sorting, projecting and including:</p>
 
 <pre><code class="language-csharp">var top = await db.Products
@@ -59,7 +67,7 @@ var products = await db.Products
 <li>On SQL Server, don't end composable SQL with a semicolon.</li>
 </ul></div>
 
-<h2>SQL injection: the one rule</h2>
+<h2 id="sql-injection-the-one-rule">SQL injection: the one rule</h2>
 <div class="compare">
   <div class="bad"><span class="tag">❌ Injectable</span>
 
@@ -81,7 +89,7 @@ db.Products.FromSqlRaw(
 </div>
 <p><code>FromSqlRaw</code> and <code>ExecuteSqlRaw</code> exist for <b>dynamic SQL structure</b>, such as table or column names you can't parameterize. Validate those identifiers against an allow-list, and still pass values as parameters. Since EF 10, a built-in analyzer warns when you concatenate strings inside a raw SQL call.</p>
 
-<h2>SqlQuery: unmapped types and scalars</h2>
+<h2 id="sqlquery-unmapped-types-and-scalars">SqlQuery: unmapped types and scalars</h2>
 <p>EF Core 8+ can materialize <b>any type</b> from SQL. It doesn't need to be in your model:</p>
 
 <pre><code class="language-csharp">public record SalesByMonth(int Year, int Month, decimal Revenue, int Orders);
@@ -100,7 +108,7 @@ var ids = await db.Database
     .Where(id =&gt; id &gt; lastId)
     .ToListAsync();</code></pre>
 
-<h2>ExecuteSql: commands</h2>
+<h2 id="executesql-commands">ExecuteSql: commands</h2>
 
 <pre><code class="language-csharp">var rows = await db.Database.ExecuteSqlAsync(
     $&quot;UPDATE Products SET Price = Price * {factor} WHERE CategoryId = {categoryId}&quot;);
@@ -108,7 +116,7 @@ var ids = await db.Database
 await db.Database.ExecuteSqlAsync($&quot;EXEC dbo.RebuildSearchIndex @Full = {true}&quot;);</code></pre>
 <p>Prefer <code>ExecuteUpdateAsync</code> (Lesson 16) for set-based updates expressible in LINQ. It's type-safe and refactor-friendly. Use <code>ExecuteSqlAsync</code> for everything else.</p>
 
-<h2>Views and keyless entities</h2>
+<h2 id="views-and-keyless-entities">Views and keyless entities</h2>
 <p>Map a database view, or any read-only result shape, as a <b>keyless entity type</b>:</p>
 
 <pre><code class="language-csharp">public class CustomerSalesView
@@ -131,7 +139,7 @@ var vips = await db.Set&lt;CustomerSalesView&gt;()
     .ToListAsync();</code></pre>
 <p>Create the view itself in a migration with <code>migrationBuilder.Sql("CREATE VIEW ...")</code>. For SQL Server, an <b>indexed view</b> can pre-compute expensive aggregates, and an <b>Azure SQL / PostgreSQL materialized view</b> plays the same role.</p>
 
-<h3>Mapping functions</h3>
+<h3 id="mapping-functions">Mapping functions</h3>
 
 <pre><code class="language-csharp">// Table-valued function → composable IQueryable
 public IQueryable&lt;Product&gt; SearchProducts(string term) =&gt; FromExpression(() =&gt; SearchProducts(term));
@@ -144,7 +152,7 @@ public static decimal Discount(decimal price, int customerTier) =&gt; throw new 
 
 var q = db.Products.Select(p =&gt; new { p.Name, Final = ShopContext.Discount(p.Price, tier) });</code></pre>
 
-<h2>When to use raw SQL</h2>
+<h2 id="when-to-use-raw-sql">When to use raw SQL</h2>
 <ul>
   <li>Window functions, CTEs, recursive queries, <code>PIVOT</code>, provider-specific operators. Check first, though: EF translates more each release.</li>
   <li>Query hints and tuned reporting queries you've already optimized in SQL.</li>
@@ -153,7 +161,7 @@ var q = db.Products.Select(p =&gt; new { p.Name, Final = ShopContext.Discount(p.
 </ul>
 
 <div class="takeaways">
-  <h2 class="box-title">🔑 Key takeaways</h2>
+  <h2 class="box-title" id="key-takeaways">🔑 Key takeaways</h2>
   <ul>
     <li><code>FromSql</code>/<code>ExecuteSql</code> parameterize interpolated values, so they're safe by construction.</li>
     <li><code>FromSqlRaw</code> is for dynamic structure only. Allow-list identifiers and never concatenate values.</li>
@@ -162,9 +170,9 @@ var q = db.Products.Select(p =&gt; new { p.Name, Final = ShopContext.Discount(p.
   </ul>
 </div>
 
-<h2>Exercise</h2>
+<h2 id="exercise">Exercise</h2>
 <div class="exercise">
-  <h3 class="box-title">🛠 Build a report two ways</h3>
+  <h3 class="box-title" id="build-a-report-two-ways">🛠 Build a report two ways</h3>
   <ol>
     <li>Write the "top 10 customers by spend in the last 90 days" report in LINQ and inspect the SQL.</li>
     <li>Write it as a view <code>vw_CustomerSpend90d</code>, map it as a keyless entity and query it.</li>
@@ -181,7 +189,7 @@ var top = await db.Customers
   </details>
 </div>
 
-<h2>Quiz</h2>
+<h2 id="quiz">Quiz</h2>
 
 <div class="quiz" data-answer="a">
 <p class="q">Is <code>FromSql($&quot;... WHERE Name = {name}&quot;)</code> safe from SQL injection?</p>
@@ -216,12 +224,13 @@ var top = await db.Customers
 <p class="explain">EF can't wrap EXEC in a subquery, so composition must happen client-side.</p>
 </div>
 
-<h2>Further reading</h2>
+<h2 id="further-reading">Further reading</h2>
 <ul>
   <li><a href="https://learn.microsoft.com/ef/core/querying/sql-queries" target="_blank" rel="noopener">SQL queries</a></li>
   <li><a href="https://learn.microsoft.com/ef/core/modeling/keyless-entity-types" target="_blank" rel="noopener">Keyless entity types</a></li>
   <li><a href="https://learn.microsoft.com/ef/core/querying/user-defined-function-mapping" target="_blank" rel="noopener">User-defined function mapping</a></li>
 </ul>
+<p class="reviewed">Last reviewed October 2026 against EF Core 10 (LTS). Spotted an error? Select it, right-click, and ask the AI tutor to double-check it, or open an issue in the repository.</p>
 </article>
 <nav id="pager" aria-label="Lesson navigation"></nav>
 </main>

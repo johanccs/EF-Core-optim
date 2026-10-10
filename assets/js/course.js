@@ -98,7 +98,8 @@
       '<span class="spacer"></span>' +
       '<span class="progress-pill" id="progress-pill"></span>' +
       '<button type="button" class="icon-btn" id="theme-btn" aria-label="Toggle dark mode"></button>';
-    body.insertBefore(bar, body.firstChild);
+    var skip = body.querySelector(".skip-link");      // keep the skip link as the first focusable element
+    body.insertBefore(bar, skip ? skip.nextSibling : body.firstChild);
     var themeBtn = bar.querySelector("#theme-btn");
     function paint() { themeBtn.textContent = currentTheme() === "dark" ? "☀ Light" : "☾ Dark"; }
     paint();
@@ -126,7 +127,13 @@
   function buildSidebar() {
     var nav = document.getElementById("sidebar");
     if (!nav) return;
-    var html = '<a class="lesson-link" href="' + root + 'index.html"><span class="num">⌂</span><span>Course home</span></a>';
+    var prevSearch = document.getElementById("course-search");
+    var prevQuery = prevSearch ? prevSearch.value : "";
+    var html = '<div class="search" role="search">' +
+      '<label class="sr-only" for="course-search">Search the course</label>' +
+      '<input id="course-search" type="search" autocomplete="off" placeholder="Search lessons…  ( / )" aria-controls="search-results">' +
+      '<div id="search-results" class="search-results" hidden></div></div>' +
+      '<a class="lesson-link" href="' + root + 'index.html"><span class="num">⌂</span><span>Course home</span></a>';
     LEVELS.forEach(function (lv) {
       html += '<div class="level-title"><span class="dot" style="background:var(--lvl-' + lv.id + ')"></span>' +
         'Level ' + lv.id + ' · ' + lv.name + '</div>';
@@ -136,12 +143,114 @@
       });
     });
     nav.innerHTML = html;
+    if (prevQuery) document.getElementById("course-search").value = prevQuery;
+    wireSearch();
     var active = nav.querySelector(".active");
     if (active) {
       active.setAttribute("aria-current", "page");
       // Scroll only the sidebar (scrollIntoView would also scroll the page)
       nav.scrollTop = Math.max(0, active.offsetTop - nav.clientHeight / 2);
     }
+  }
+
+  /* ---------- Full-text search ---------- */
+  var searchLoading = null;
+  function loadSearchIndex() {
+    if (window.EF_SEARCH_INDEX) return Promise.resolve(window.EF_SEARCH_INDEX);
+    if (!searchLoading) {
+      searchLoading = new Promise(function (resolve) {
+        var sc = document.createElement("script");
+        sc.src = root + "assets/js/search-index.js";
+        sc.onload = function () { resolve(window.EF_SEARCH_INDEX || []); };
+        sc.onerror = function () { resolve([]); };
+        document.head.appendChild(sc);
+      });
+    }
+    return searchLoading;
+  }
+
+  function searchIndex(index, query) {
+    var terms = query.toLowerCase().split(/\s+/).filter(function (t) { return t.length > 1; });
+    if (!terms.length) return [];
+    var results = [];
+    index.forEach(function (e) {
+      var text = e.x.toLowerCase(), head = e.h.toLowerCase(), title = e.t.toLowerCase(), score = 0;
+      for (var i = 0; i < terms.length; i++) {
+        var t = terms[i];
+        var inText = text.indexOf(t) !== -1, inHead = head.indexOf(t) !== -1, inTitle = title.indexOf(t) !== -1;
+        if (!inText && !inHead && !inTitle) return;          // every term must match
+        score += (inHead ? 8 : 0) + (inTitle ? 4 : 0) + Math.min(text.split(t).length - 1, 5);
+      }
+      results.push({ e: e, score: score });
+    });
+    results.sort(function (a, b) { return b.score - a.score || a.e.l - b.e.l; });
+    return results.slice(0, 12);
+  }
+
+  function snippet(text, term) {
+    var lower = text.toLowerCase(), t = term.toLowerCase();
+    var i = lower.indexOf(t);
+    var start = Math.max(0, i - 50), stop = Math.min(text.length, start + 150);
+    var piece = text.slice(start, stop), out = "", pos = 0, lp = piece.toLowerCase();
+    // Highlight on raw text, escape each segment (never regex over escaped HTML)
+    if (t.length > 1) {
+      for (var j = lp.indexOf(t); j !== -1; j = lp.indexOf(t, pos)) {
+        out += esc(piece.slice(pos, j)) + "<mark>" + esc(piece.slice(j, j + t.length)) + "</mark>";
+        pos = j + t.length;
+      }
+    }
+    out += esc(piece.slice(pos));
+    return (start > 0 ? "…" : "") + out + (stop < text.length ? "…" : "");
+  }
+
+  function wireSearch() {
+    var input = document.getElementById("course-search");
+    var box = document.getElementById("search-results");
+    if (!input || !box) return;
+    var timer = null;
+    function run() {
+      var q = input.value.trim();
+      if (q.length < 2) { box.hidden = true; box.innerHTML = ""; return; }
+      loadSearchIndex().then(function (index) {
+        var res = searchIndex(index, q);
+        var first = q.split(/\s+/).filter(function (t) { return t.length > 1; })[0] || q;
+        box.innerHTML = res.length
+          ? res.map(function (r) {
+              var e = r.e;
+              return '<a class="search-hit" href="' + root + "lessons/" + e.s + ".html" + (e.a ? "#" + e.a : "") + '">' +
+                '<span class="hit-title">' + e.l + ". " + esc(e.t) + (e.h && e.h !== "Introduction" ? " › " + esc(e.h) : "") + "</span>" +
+                '<span class="hit-snippet">' + snippet(e.x, first) + "</span></a>";
+            }).join("")
+          : '<p class="no-hits">No matches. Try fewer or different words.</p>';
+        box.hidden = false;
+      });
+    }
+    input.addEventListener("focus", loadSearchIndex);
+    input.addEventListener("input", function () { clearTimeout(timer); timer = setTimeout(run, 120); });
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") { input.value = ""; run(); input.blur(); }
+      if (e.key === "Enter") { var hit = box.querySelector(".search-hit"); if (hit) location.href = hit.href; }
+      if (e.key === "ArrowDown") { var h = box.querySelector(".search-hit"); if (h) { e.preventDefault(); h.focus(); } }
+    });
+    box.addEventListener("keydown", function (e) {
+      var hits = Array.prototype.slice.call(box.querySelectorAll(".search-hit"));
+      var i = hits.indexOf(document.activeElement);
+      if (e.key === "ArrowDown" && i < hits.length - 1) { e.preventDefault(); hits[i + 1].focus(); }
+      if (e.key === "ArrowUp") { e.preventDefault(); (i > 0 ? hits[i - 1] : input).focus(); }
+      if (e.key === "Escape") { input.focus(); }
+    });
+    if (window.__efSlashBound) return;      // wireSearch runs on every sidebar rebuild
+    window.__efSlashBound = true;
+    document.addEventListener("keydown", function (e) {
+      var tag = (document.activeElement && document.activeElement.tagName) || "";
+      var input = document.getElementById("course-search");
+      if (!input) return;
+      if (e.key === "/" && !/INPUT|TEXTAREA|SELECT/.test(tag) && !document.querySelector(".ai-backdrop:not([hidden])")) {
+        e.preventDefault();
+        body.classList.add("nav-open");
+        input.focus();
+      }
+    });
   }
 
   /* ---------- Lesson header meta ---------- */
@@ -279,18 +388,23 @@
 
   /* ---------- Heading anchors ---------- */
   function addAnchors() {
+    var hashTarget = location.hash ? location.hash.slice(1) : "";
+    var existedBefore = !!(hashTarget && document.getElementById(hashTarget));
     var used = {};
     document.querySelectorAll("article h2, article h3").forEach(function (h) {
       if (h.id) { used[h.id] = true; return; }
       var base = h.textContent.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "section";
+      if (!/^[a-z]/.test(base)) base = "s-" + base;   // same rule as build.py: ids start with a letter
       var id = base, n = 2;
       while (used[id] || document.getElementById(id)) id = base + "-" + n++;   // keep ids unique
       used[id] = true;
       h.id = id;
     });
-    if (location.hash) {
-      var target = document.getElementById(location.hash.slice(1));
-      if (target) target.scrollIntoView();
+    // Lesson headings get ids at build time, so the browser already jumped to the hash.
+    // Only scroll when the target id was created here (e.g. on the home page).
+    if (hashTarget && !existedBefore) {
+      var target = document.getElementById(hashTarget);
+      if (target) target.scrollIntoView({ behavior: "auto" });
     }
   }
 

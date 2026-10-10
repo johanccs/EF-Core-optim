@@ -138,7 +138,7 @@ If you do use it, turn on detection: EF logs <code>CoreEventId.LazyLoadOnDispose
 
 <h2>Comparing the strategies</h2>
 <table>
-  <tr><th></th><th>Eager (Include)</th><th>Explicit</th><th>Lazy</th><th>Projection</th></tr>
+  <tr><th>Aspect</th><th>Eager (Include)</th><th>Explicit</th><th>Lazy</th><th>Projection</th></tr>
   <tr><td>Round trips</td><td>1 (or a few with split queries)</td><td>1 per Load call</td><td>1 per navigation access</td><td>1</td></tr>
   <tr><td>Columns fetched</td><td>All</td><td>All</td><td>All</td><td>Only what's selected</td></tr>
   <tr><td>Tracked</td><td>Yes (unless AsNoTracking)</td><td>Yes</td><td>Yes</td><td>No</td></tr>

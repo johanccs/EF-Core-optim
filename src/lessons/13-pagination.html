@@ -110,7 +110,7 @@ Return the cursor to clients as an opaque string, for example Base64 of the JSON
 
 <h3>Offset vs keyset</h3>
 <table>
-  <tr><th></th><th>Offset (Skip/Take)</th><th>Keyset (seek)</th></tr>
+  <tr><th>Aspect</th><th>Offset (Skip/Take)</th><th>Keyset (seek)</th></tr>
   <tr><td>Deep page performance</td><td>Degrades linearly</td><td>Constant (with index)</td></tr>
   <tr><td>Jump to arbitrary page</td><td>✅ Yes</td><td>❌ Only next/previous</td></tr>
   <tr><td>Stable under inserts/deletes</td><td>❌ Drift</td><td>✅ Stable</td></tr>

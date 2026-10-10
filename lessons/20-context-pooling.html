@@ -2,15 +2,23 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src https:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DbContext Pooling &amp;amp; Factories · EF Core Optimization Course</title>
-<meta name="description" content="DbContext Pooling &amp;amp; Factories: a lesson from the EF Core Optimization Course.">
+<title>DbContext Pooling &amp; Factories · EF Core Optimization Course</title>
+<meta name="description" content="At thousands of requests per second, even creating and wiring up a DbContext shows up in profiles. DbContext pooling reuses context instances. This lesson covers how pooling works, what it costs, and the state-related bugs to avoid.">
+<meta property="og:title" content="DbContext Pooling &amp; Factories">
+<meta property="og:description" content="At thousands of requests per second, even creating and wiring up a DbContext shows up in profiles. DbContext pooling reuses context instances. This lesson covers how pooling works, what it costs, and the state-related bugs to avoid.">
+<meta property="og:type" content="article">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="../assets/css/course.css">
+<script src="../assets/js/theme-init.js"></script>
 </head>
 <body data-lesson="20" data-root="../">
+<a class="skip-link" href="#main">Skip to content</a>
 <div class="layout">
 <nav id="sidebar" aria-label="Lessons"></nav>
-<main class="content">
+<main class="content" id="main">
+<noscript><p class="callout warn">Navigation, quizzes and progress tracking need JavaScript. The lesson text below still works without it.</p></noscript>
 <article>
 <h1>DbContext Pooling &amp; Factories</h1>
 <p class="lead">At thousands of requests per second, even creating and wiring up a DbContext shows up in profiles. DbContext pooling reuses context instances. This lesson covers how pooling works, what it costs, and the state-related bugs to avoid.</p>
@@ -23,7 +31,7 @@
 </div>
 
 <div class="objectives">
-  <h2 class="box-title">By the end of this lesson you will be able to</h2>
+  <h2 class="box-title" id="by-the-end-of-this-lesson-you-will-be-able-to">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Enable pooling with <code>AddDbContextPool</code> and <code>AddPooledDbContextFactory</code>.</li>
     <li>Explain what is and isn't reset when a context returns to the pool.</li>
@@ -32,7 +40,7 @@
   </ul>
 </div>
 
-<h2>What pooling does</h2>
+<h2 id="what-pooling-does">What pooling does</h2>
 <p>Without pooling, each request creates a new <code>DbContext</code>, which allocates its internal service graph, change tracker and state manager, then throws it away. With pooling, EF keeps a pool of already-initialized instances. When your code disposes a context, EF <b>resets</b> its state and returns it to the pool for the next request.</p>
 
 <pre><code class="language-csharp">builder.Services.AddDbContextPool&lt;ShopContext&gt;(
@@ -40,7 +48,7 @@
     poolSize: 1024);          // max instances retained (default 1024)</code></pre>
 <p>Consumers don't change. They still inject <code>ShopContext</code> per request.</p>
 
-<h3>Pooled factories</h3>
+<h3 id="pooled-factories">Pooled factories</h3>
 <p>For Blazor, background services or any code that creates contexts on demand:</p>
 
 <pre><code class="language-csharp">builder.Services.AddPooledDbContextFactory&lt;ShopContext&gt;(o =&gt; o.UseSqlServer(connStr));
@@ -60,7 +68,7 @@ public class ImportService(IDbContextFactory&lt;ShopContext&gt; factory)
 var factory = new PooledDbContextFactory&lt;ShopContext&gt;(options);
 await using var db = factory.CreateDbContext();</code></pre>
 
-<h2>Requirements and pitfalls</h2>
+<h2 id="requirements-and-pitfalls">Requirements and pitfalls</h2>
 <ul>
   <li><b>Options are fixed.</b> The options delegate runs once, not per request, so you can't configure a different connection string per request inside it. <code>OnConfiguring</code> also isn't the place for per-request settings.</li>
   <li><b>Constructor.</b> The context needs a public constructor accepting <code>DbContextOptions&lt;TContext&gt;</code>. Don't inject scoped services into a pooled context's constructor. It would capture the first request's instance forever.</li>
@@ -70,7 +78,7 @@ await using var db = factory.CreateDbContext();</code></pre>
 <div class="callout danger"><span class="title">The cross-tenant data leak</span>
 A pooled context with a <code>TenantId</code> field set in one request and not reset in the next could serve tenant A's data to tenant B. Always set the state on <b>every</b> rent, as in the pattern below. Never rely on a value set in an earlier request.</div>
 
-<h2>Per-request state with pooling</h2>
+<h2 id="per-request-state-with-pooling">Per-request state with pooling</h2>
 <p>The pattern from the official docs: register a pooled factory, then a scoped wrapper that sets state each time it creates a context:</p>
 
 <pre><code class="language-csharp">public class ShopContext(DbContextOptions&lt;ShopContext&gt; options) : DbContext(options)
@@ -99,7 +107,7 @@ builder.Services.AddPooledDbContextFactory&lt;ShopContext&gt;(o =&gt; o.UseSqlSe
 builder.Services.AddScoped&lt;TenantContextFactory&gt;();
 builder.Services.AddScoped(sp =&gt; sp.GetRequiredService&lt;TenantContextFactory&gt;().CreateDbContext());</code></pre>
 
-<h2>Is it worth it?</h2>
+<h2 id="is-it-worth-it">Is it worth it?</h2>
 <p>Pooling saves a fixed amount of CPU and allocation per context instance, typically microseconds. It makes a measurable difference only when context creation is a meaningful share of the request:</p>
 <ul>
   <li>✅ High-throughput APIs with simple, fast queries (cache-like reads, thousands of requests per second).</li>
@@ -112,7 +120,7 @@ builder.Services.AddScoped(sp =&gt; sp.GetRequiredService&lt;TenantContextFactor
 DbContext pooling reuses .NET objects. ADO.NET connection pooling reuses database connections, which is the bigger win, and it's already on. A pooled context still opens and closes connections per operation through the connection pool.</div>
 
 <div class="takeaways">
-  <h2 class="box-title">🔑 Key takeaways</h2>
+  <h2 class="box-title" id="key-takeaways">🔑 Key takeaways</h2>
   <ul>
     <li>Pooling reuses DbContext instances. It saves a fixed cost per request, which matters at high throughput.</li>
     <li>EF resets its own state, but not your custom fields. Set per-request state on every rent.</li>
@@ -121,16 +129,16 @@ DbContext pooling reuses .NET objects. ADO.NET connection pooling reuses databas
   </ul>
 </div>
 
-<h2>Exercise</h2>
+<h2 id="exercise">Exercise</h2>
 <div class="exercise">
-  <h3 class="box-title">🛠 Pool safely</h3>
+  <h3 class="box-title" id="pool-safely">🛠 Pool safely</h3>
   <ol>
     <li>Switch the playground API to <code>AddDbContextPool</code>. Use a load tool (<code>bombardier</code>, <code>k6</code> or <code>NBomber</code>) against a simple GET by id, and compare requests per second and allocations before and after.</li>
     <li>Add a <code>TenantId</code> field and set it in the controller only when a header is present. Show that a pooled context can carry the previous value. Then fix it with the factory wrapper.</li>
   </ol>
 </div>
 
-<h2>Quiz</h2>
+<h2 id="quiz">Quiz</h2>
 
 <div class="quiz" data-answer="c">
 <p class="q">What does EF reset when a pooled context is returned to the pool?</p>
@@ -165,10 +173,11 @@ DbContext pooling reuses .NET objects. ADO.NET connection pooling reuses databas
 <p class="explain">When queries are fast, context setup is a larger share of each request.</p>
 </div>
 
-<h2>Further reading</h2>
+<h2 id="further-reading">Further reading</h2>
 <ul>
   <li><a href="https://learn.microsoft.com/ef/core/performance/advanced-performance-topics#dbcontext-pooling" target="_blank" rel="noopener">Advanced performance topics: DbContext pooling</a></li>
 </ul>
+<p class="reviewed">Last reviewed October 2026 against EF Core 10 (LTS). Spotted an error? Select it, right-click, and ask the AI tutor to double-check it, or open an issue in the repository.</p>
 </article>
 <nav id="pager" aria-label="Lesson navigation"></nav>
 </main>

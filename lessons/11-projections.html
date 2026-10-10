@@ -2,15 +2,23 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src https:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Projections: Fetch Only What You Need · EF Core Optimization Course</title>
-<meta name="description" content="Projections: Fetch Only What You Need: a lesson from the EF Core Optimization Course.">
+<meta name="description" content="Projecting with Select is often the single biggest read optimization in EF Core. It shrinks the SQL result, skips tracking, lets the database use covering indexes and avoids loading graphs.">
+<meta property="og:title" content="Projections: Fetch Only What You Need">
+<meta property="og:description" content="Projecting with Select is often the single biggest read optimization in EF Core. It shrinks the SQL result, skips tracking, lets the database use covering indexes and avoids loading graphs.">
+<meta property="og:type" content="article">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="../assets/css/course.css">
+<script src="../assets/js/theme-init.js"></script>
 </head>
 <body data-lesson="11" data-root="../">
+<a class="skip-link" href="#main">Skip to content</a>
 <div class="layout">
 <nav id="sidebar" aria-label="Lessons"></nav>
-<main class="content">
+<main class="content" id="main">
+<noscript><p class="callout warn">Navigation, quizzes and progress tracking need JavaScript. The lesson text below still works without it.</p></noscript>
 <article>
 <h1>Projections: Fetch Only What You Need</h1>
 <p class="lead">Projecting with <code>Select</code> is often the single biggest read optimization in EF Core. It shrinks the SQL result, skips tracking, lets the database use covering indexes and avoids loading graphs.</p>
@@ -23,7 +31,7 @@
 </div>
 
 <div class="objectives">
-  <h2 class="box-title">By the end of this lesson you will be able to</h2>
+  <h2 class="box-title" id="by-the-end-of-this-lesson-you-will-be-able-to">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Project entities into DTOs, records and anonymous types.</li>
     <li>Pull related data through navigation properties inside a projection, without <code>Include</code>.</li>
@@ -32,7 +40,7 @@
   </ul>
 </div>
 
-<h2>The problem: over-fetching</h2>
+<h2 id="the-problem-over-fetching">The problem: over-fetching</h2>
 <p>A product list page needs id, name and price. Loading full entities fetches every column, including the 2 KB <code>Description</code>:</p>
 
 <div class="compare">
@@ -69,7 +77,7 @@ WHERE [p].[CategoryId] = 3</code></pre>
   <li><b>Shape matches the API</b>: you stop leaking entities, and accidental lazy loads, into serialization.</li>
 </ul>
 
-<h2>Navigation properties inside projections</h2>
+<h2 id="navigation-properties-inside-projections">Navigation properties inside projections</h2>
 <p>Inside a <code>Select</code> you can walk navigation properties freely. EF translates them into JOINs or subqueries. <b>No <code>Include</code> is needed</b>, and <code>Include</code> is ignored when the final result isn't an entity.</p>
 
 <pre><code class="language-csharp">public record OrderSummary(int Id, DateTime PlacedUtc, string CustomerName, int LineCount, decimal Total);
@@ -95,7 +103,7 @@ INNER JOIN [Customers] AS [c] ON [o].[CustomerId] = [c].[Id]
 WHERE [o].[Status] = 1
 ORDER BY [o].[PlacedUtc] DESC</code></pre>
 
-<h3>Nested collections</h3>
+<h3 id="nested-collections">Nested collections</h3>
 <p>Projections can include child collections. EF fetches them with a JOIN, or with split queries if you ask (Lesson 15):</p>
 
 <pre><code class="language-csharp">var detail = await db.Orders
@@ -108,7 +116,7 @@ ORDER BY [o].[PlacedUtc] DESC</code></pre>
     })
     .SingleOrDefaultAsync();</code></pre>
 
-<h2>Reusable projections</h2>
+<h2 id="reusable-projections">Reusable projections</h2>
 <p>Duplicating projection code everywhere is error-prone. Store it as an <code>Expression&lt;Func&lt;T, TDto&gt;&gt;</code>, which stays translatable to SQL:</p>
 
 <pre><code class="language-csharp">public record ProductListItem(int Id, string Name, decimal Price, string Category)
@@ -139,10 +147,10 @@ EF can't see inside a C# method call or constructor body. If you write <code>.Se
   </div>
 </div>
 
-<h3>What about AutoMapper and Mapster?</h3>
+<h3 id="what-about-automapper-and-mapster">What about AutoMapper and Mapster?</h3>
 <p>Mapping libraries can generate expression-based projections: AutoMapper's <code>ProjectTo&lt;T&gt;()</code>, Mapster's <code>ProjectToType&lt;T&gt;()</code>, and source generators such as Mapperly's queryable projections. These are fine. Avoid <code>Map&lt;T&gt;()</code> on already-loaded entities, because that is the over-fetching pattern again. Always check the generated SQL.</p>
 
-<h2>Projection pitfalls</h2>
+<h2 id="projection-pitfalls">Projection pitfalls</h2>
 <ul>
   <li><b>Projecting an entity inside an anonymous type</b> (<code>new { Product = p }</code>) fetches every column of that entity and tracks it.</li>
   <li><b>Nullable navigations</b>: <code>o.Customer.Name</code> becomes a LEFT JOIN if the relationship is optional, so it can be <code>null</code>. Model the DTO property as nullable.</li>
@@ -150,7 +158,7 @@ EF can't see inside a C# method call or constructor body. If you write <code>.Se
 </ul>
 
 <div class="takeaways">
-  <h2 class="box-title">🔑 Key takeaways</h2>
+  <h2 class="box-title" id="key-takeaways">🔑 Key takeaways</h2>
   <ul>
     <li>Project with <code>Select</code> to fetch only the columns the caller needs. This is often the biggest single read win.</li>
     <li>Navigations inside projections become JOINs or subqueries automatically. <code>Include</code> isn't needed there.</li>
@@ -159,9 +167,9 @@ EF can't see inside a C# method call or constructor body. If you write <code>.Se
   </ul>
 </div>
 
-<h2>Exercise</h2>
+<h2 id="exercise">Exercise</h2>
 <div class="exercise">
-  <h3 class="box-title">🛠 Build a lean customer dashboard query</h3>
+  <h3 class="box-title" id="build-a-lean-customer-dashboard-query">🛠 Build a lean customer dashboard query</h3>
   <p>Write one query that returns, for the 20 newest customers: Id, Name, number of orders, date of last order (nullable), and lifetime spend. Then print the SQL with <code>ToQueryString()</code>.</p>
   <details><summary>Show solution</summary>
 
@@ -181,7 +189,7 @@ EF can't see inside a C# method call or constructor body. If you write <code>.Se
   </details>
 </div>
 
-<h2>Quiz</h2>
+<h2 id="quiz">Quiz</h2>
 
 <div class="quiz" data-answer="b">
 <p class="q">Is <code>Include()</code> needed to read <code>o.Customer.Name</code> inside a <code>Select</code> projection?</p>
@@ -216,11 +224,12 @@ EF can't see inside a C# method call or constructor body. If you write <code>.Se
 <p class="explain">Only entity instances are tracked. A DTO containing an entity instance still tracks that entity.</p>
 </div>
 
-<h2>Further reading</h2>
+<h2 id="further-reading">Further reading</h2>
 <ul>
   <li><a href="https://learn.microsoft.com/ef/core/performance/efficient-querying#project-only-properties-you-need" target="_blank" rel="noopener">Efficient querying: project only properties you need</a></li>
   <li><a href="https://learn.microsoft.com/ef/core/querying/complex-query-operators" target="_blank" rel="noopener">Complex query operators</a></li>
 </ul>
+<p class="reviewed">Last reviewed October 2026 against EF Core 10 (LTS). Spotted an error? Select it, right-click, and ask the AI tutor to double-check it, or open an issue in the repository.</p>
 </article>
 <nav id="pager" aria-label="Lesson navigation"></nav>
 </main>

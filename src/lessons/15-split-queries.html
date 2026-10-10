@@ -71,7 +71,7 @@ var dto = await db.Customers
 
 <h2>Trade-offs</h2>
 <table>
-  <tr><th></th><th>Single query (default)</th><th>Split query</th></tr>
+  <tr><th>Aspect</th><th>Single query (default)</th><th>Split query</th></tr>
   <tr><td>Round trips</td><td>1</td><td>1 + number of collection includes</td></tr>
   <tr><td>Data duplication</td><td>High with collections</td><td>None</td></tr>
   <tr><td>Consistency</td><td>Atomic snapshot</td><td>⚠ Data can change between queries unless you use a serializable or snapshot transaction</td></tr>

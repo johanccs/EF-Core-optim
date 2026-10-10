@@ -2,15 +2,23 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src https:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Loading Related Data &amp;amp; the N+1 Problem · EF Core Optimization Course</title>
-<meta name="description" content="Loading Related Data &amp;amp; the N+1 Problem: a lesson from the EF Core Optimization Course.">
+<title>Loading Related Data &amp; the N+1 Problem · EF Core Optimization Course</title>
+<meta name="description" content="How you load related entities decides whether a page sends 1 query or 1,001. This lesson covers EF Core&#x27;s three loading strategies and how to find and fix the N+1 problem.">
+<meta property="og:title" content="Loading Related Data &amp; the N+1 Problem">
+<meta property="og:description" content="How you load related entities decides whether a page sends 1 query or 1,001. This lesson covers EF Core&#x27;s three loading strategies and how to find and fix the N+1 problem.">
+<meta property="og:type" content="article">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="../assets/css/course.css">
+<script src="../assets/js/theme-init.js"></script>
 </head>
 <body data-lesson="12" data-root="../">
+<a class="skip-link" href="#main">Skip to content</a>
 <div class="layout">
 <nav id="sidebar" aria-label="Lessons"></nav>
-<main class="content">
+<main class="content" id="main">
+<noscript><p class="callout warn">Navigation, quizzes and progress tracking need JavaScript. The lesson text below still works without it.</p></noscript>
 <article>
 <h1>Loading Related Data &amp; the N+1 Problem</h1>
 <p class="lead">How you load related entities decides whether a page sends 1 query or 1,001. This lesson covers EF Core's three loading strategies and how to find and fix the N+1 problem.</p>
@@ -23,7 +31,7 @@
 </div>
 
 <div class="objectives">
-  <h2 class="box-title">By the end of this lesson you will be able to</h2>
+  <h2 class="box-title" id="by-the-end-of-this-lesson-you-will-be-able-to">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Use eager (<code>Include</code>/<code>ThenInclude</code>), explicit and lazy loading correctly.</li>
     <li>Recognize and fix N+1 query patterns.</li>
@@ -32,7 +40,7 @@
   </ul>
 </div>
 
-<h2>The N+1 problem</h2>
+<h2 id="the-n-1-problem">The N+1 problem</h2>
 <p>N+1 means one query to fetch a list, plus one extra query <b>per item</b> to fetch related data. With 100 orders, that's 101 round trips. Even at 1 ms each, the latency adds up, and on a cloud database with 2–5 ms latency the page takes half a second just waiting on the network.</p>
 
 <div class="compare">
@@ -61,7 +69,7 @@ foreach (var r in rows)
   </div>
 </div>
 
-<h2>Strategy 1: Eager loading with Include</h2>
+<h2 id="strategy-1-eager-loading-with-include">Strategy 1: Eager loading with Include</h2>
 <p>Use eager loading when you need <b>entities</b>, typically to modify them, together with their related data.</p>
 
 <pre><code class="language-csharp">var order = await db.Orders
@@ -79,7 +87,7 @@ LEFT JOIN (
 ) AS [s] ON [o].[Id] = [s].[OrderId]
 ORDER BY [o].[Id], [c].[Id], [s].[Id]</code></pre>
 
-<h3>Filtered include</h3>
+<h3 id="filtered-include">Filtered include</h3>
 <p>Load only the children you need. <code>Where</code>, <code>OrderBy</code>, <code>Skip</code> and <code>Take</code> are supported inside <code>Include</code>:</p>
 
 <pre><code class="language-csharp">var customers = await db.Customers
@@ -91,10 +99,10 @@ ORDER BY [o].[Id], [c].[Id], [s].[Id]</code></pre>
 <div class="callout warn"><span class="title">Filtered include + tracking</span>
 With tracking, if some of a customer's other orders were already tracked by the context, they'll still appear in <code>customer.Orders</code> through navigation fix-up, even though they don't match the filter. Use <code>AsNoTracking()</code>, or a fresh context, when the filtered collection must be exact.</div>
 
-<h3>Don't over-include</h3>
+<h3 id="don-t-over-include">Don't over-include</h3>
 <p>Every <code>Include</code> fetches <b>all columns</b> of the related table. Including collections multiplies rows (cartesian explosion, Lesson 15). For read-only screens, a projection (Lesson 11) is almost always better than a chain of <code>Include</code> calls.</p>
 
-<h2>Strategy 2: Explicit loading</h2>
+<h2 id="strategy-2-explicit-loading">Strategy 2: Explicit loading</h2>
 <p>Load a navigation later, on demand, for an already-tracked entity:</p>
 
 <pre><code class="language-csharp">var customer = await db.Customers.SingleAsync(c =&gt; c.Id == id);
@@ -112,7 +120,7 @@ if (needOrders)
 var orderCount = await db.Entry(customer).Collection(c =&gt; c.Orders).Query().CountAsync();</code></pre>
 <p>Explicit loading is fine for a <b>single</b> entity. Doing it inside a loop is N+1 again.</p>
 
-<h2>Strategy 3: Lazy loading</h2>
+<h2 id="strategy-3-lazy-loading">Strategy 3: Lazy loading</h2>
 <p>With lazy loading, a navigation property loads itself from the database the first time you access it. It needs the <code>Microsoft.EntityFrameworkCore.Proxies</code> package, <code>UseLazyLoadingProxies()</code>, and <code>virtual</code> navigation properties.</p>
 
 <pre><code class="language-csharp">// 1. Configuration (Program.cs)
@@ -136,9 +144,9 @@ foreach (var order in await db.Orders.ToListAsync())
 </ul>
 If you do use it, turn on detection: EF logs <code>CoreEventId.LazyLoadOnDisposedContextWarning</code>, and you can throw on <code>CoreEventId.NavigationLazyLoading</code> in tests to find lazy loads.</div>
 
-<h2>Comparing the strategies</h2>
+<h2 id="comparing-the-strategies">Comparing the strategies</h2>
 <table>
-  <thead><tr><th scope="col"></th><th scope="col">Eager (Include)</th><th scope="col">Explicit</th><th scope="col">Lazy</th><th scope="col">Projection</th></tr></thead>
+  <thead><tr><th scope="col">Aspect</th><th scope="col">Eager (Include)</th><th scope="col">Explicit</th><th scope="col">Lazy</th><th scope="col">Projection</th></tr></thead>
   <tbody>
   <tr><td>Round trips</td><td>1 (or a few with split queries)</td><td>1 per Load call</td><td>1 per navigation access</td><td>1</td></tr>
   <tr><td>Columns fetched</td><td>All</td><td>All</td><td>All</td><td>Only what's selected</td></tr>
@@ -147,7 +155,7 @@ If you do use it, turn on detection: EF logs <code>CoreEventId.LazyLoadOnDispose
   </tbody>
 </table>
 
-<h2>Detecting N+1</h2>
+<h2 id="detecting-n-1">Detecting N+1</h2>
 <ul>
   <li><b>Logs</b>: repeated identical SQL with only the parameter changing is the giveaway.</li>
   <li><b>Count commands per request</b>: a <code>DbCommandInterceptor</code> (Lesson 24) can count queries and warn above a threshold.</li>
@@ -156,7 +164,7 @@ If you do use it, turn on detection: EF logs <code>CoreEventId.LazyLoadOnDispose
 </ul>
 
 <div class="takeaways">
-  <h2 class="box-title">🔑 Key takeaways</h2>
+  <h2 class="box-title" id="key-takeaways">🔑 Key takeaways</h2>
   <ul>
     <li>N+1 means one query per item. It's the most common ORM performance bug.</li>
     <li>Use projections for reads, <code>Include</code> (optionally filtered) to load graphs you'll modify, and explicit loading for single entities.</li>
@@ -165,9 +173,9 @@ If you do use it, turn on detection: EF logs <code>CoreEventId.LazyLoadOnDispose
   </ul>
 </div>
 
-<h2>Exercise</h2>
+<h2 id="exercise">Exercise</h2>
 <div class="exercise">
-  <h3 class="box-title">🛠 Kill the N+1</h3>
+  <h3 class="box-title" id="kill-the-n-1">🛠 Kill the N+1</h3>
   <p>This code builds an "invoice" view. Count the queries, then rewrite it as one query.</p>
 
 <pre><code class="language-csharp">var orders = await db.Orders.Where(o =&gt; o.CustomerId == customerId).ToListAsync();
@@ -197,7 +205,7 @@ foreach (var o in orders)
   </details>
 </div>
 
-<h2>Quiz</h2>
+<h2 id="quiz">Quiz</h2>
 
 <div class="quiz" data-answer="c">
 <p class="q">A page lists 200 orders and shows each customer's name using lazy loading. How many queries run, worst case?</p>
@@ -232,11 +240,12 @@ foreach (var o in orders)
 <p class="explain">Filtered include (EF Core 5+) supports Where, OrderBy/ThenBy (and descending), Skip and Take.</p>
 </div>
 
-<h2>Further reading</h2>
+<h2 id="further-reading">Further reading</h2>
 <ul>
   <li><a href="https://learn.microsoft.com/ef/core/querying/related-data/" target="_blank" rel="noopener">Loading related data</a></li>
   <li><a href="https://learn.microsoft.com/ef/core/performance/efficient-querying#beware-of-lazy-loading" target="_blank" rel="noopener">Beware of lazy loading</a></li>
 </ul>
+<p class="reviewed">Last reviewed October 2026 against EF Core 10 (LTS). Spotted an error? Select it, right-click, and ask the AI tutor to double-check it, or open an issue in the repository.</p>
 </article>
 <nav id="pager" aria-label="Lesson navigation"></nav>
 </main>

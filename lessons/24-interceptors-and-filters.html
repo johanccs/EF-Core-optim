@@ -2,15 +2,23 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src https:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Interceptors, Query Filters &amp;amp; Conventions · EF Core Optimization Course</title>
-<meta name="description" content="Interceptors, Query Filters &amp;amp; Conventions: a lesson from the EF Core Optimization Course.">
+<title>Interceptors, Query Filters &amp; Conventions · EF Core Optimization Course</title>
+<meta name="description" content="Cross-cutting concerns such as soft delete, multi-tenancy, auditing, query hints and monitoring belong in one place, not copied into every query. This lesson covers EF&#x27;s extension points and how to use them without adding overhead.">
+<meta property="og:title" content="Interceptors, Query Filters &amp; Conventions">
+<meta property="og:description" content="Cross-cutting concerns such as soft delete, multi-tenancy, auditing, query hints and monitoring belong in one place, not copied into every query. This lesson covers EF&#x27;s extension points and how to use them without adding overhead.">
+<meta property="og:type" content="article">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="../assets/css/course.css">
+<script src="../assets/js/theme-init.js"></script>
 </head>
 <body data-lesson="24" data-root="../">
+<a class="skip-link" href="#main">Skip to content</a>
 <div class="layout">
 <nav id="sidebar" aria-label="Lessons"></nav>
-<main class="content">
+<main class="content" id="main">
+<noscript><p class="callout warn">Navigation, quizzes and progress tracking need JavaScript. The lesson text below still works without it.</p></noscript>
 <article>
 <h1>Interceptors, Query Filters &amp; Conventions</h1>
 <p class="lead">Cross-cutting concerns such as soft delete, multi-tenancy, auditing, query hints and monitoring belong in one place, not copied into every query. This lesson covers EF's extension points and how to use them without adding overhead.</p>
@@ -23,7 +31,7 @@
 </div>
 
 <div class="objectives">
-  <h2 class="box-title">By the end of this lesson you will be able to</h2>
+  <h2 class="box-title" id="by-the-end-of-this-lesson-you-will-be-able-to">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Write command, SaveChanges and materialization interceptors.</li>
     <li>Use global query filters for soft delete and tenancy, including EF 10 named filters.</li>
@@ -32,7 +40,7 @@
   </ul>
 </div>
 
-<h2>Interceptors</h2>
+<h2 id="interceptors">Interceptors</h2>
 <p>Interceptors let you observe and modify EF operations. The main kinds:</p>
 <table>
   <thead><tr><th scope="col">Interface / base class</th><th scope="col">Intercepts</th><th scope="col">Typical use</th></tr></thead>
@@ -49,7 +57,7 @@
 <div class="callout warn"><span class="title">Interceptors are on the hot path</span>
 Command interceptors run for <b>every</b> command. Keep them cheap. No I/O, no heavy allocation, no locks. Register stateless interceptors as singletons and add them once with <code>AddInterceptors</code>.</div>
 
-<h3>Example: audit fields with SaveChangesInterceptor</h3>
+<h3 id="example-audit-fields-with-savechangesinterceptor">Example: audit fields with SaveChangesInterceptor</h3>
 
 <pre><code class="language-csharp">public interface IAuditable { DateTime CreatedUtc { get; set; } DateTime? ModifiedUtc { get; set; } }
 
@@ -81,7 +89,7 @@ public sealed class AuditInterceptor(TimeProvider clock) : SaveChangesIntercepto
     }
 }</code></pre>
 
-<h3>Example: query hints by tag</h3>
+<h3 id="example-query-hints-by-tag">Example: query hints by tag</h3>
 <p>Combine a query tag (Lesson 19) with a command interceptor to add a hint to specific queries only, for example to fight parameter sniffing:</p>
 
 <pre><code class="language-csharp">public sealed class RecompileHintInterceptor : DbCommandInterceptor
@@ -112,7 +120,7 @@ public sealed class AuditInterceptor(TimeProvider clock) : SaveChangesIntercepto
 
 var rows = await db.Orders.TagWith(&quot;hint:recompile&quot;).Where(o =&gt; o.CustomerId == id).ToListAsync();</code></pre>
 
-<h2>Global query filters</h2>
+<h2 id="global-query-filters">Global query filters</h2>
 <p>A query filter is a predicate EF adds automatically to every query on an entity type, including <code>Include</code>s and navigations:</p>
 
 <pre><code class="language-csharp">public class ShopContext(DbContextOptions&lt;ShopContext&gt; options, ITenantProvider tenant) : DbContext(options)
@@ -140,7 +148,7 @@ Before EF 10, an entity type could have only one filter. Calling <code>HasQueryF
 var bin = await db.Orders.IgnoreQueryFilters([&quot;SoftDelete&quot;]).Where(o =&gt; o.IsDeleted).ToListAsync();</code></pre>
 </div>
 
-<h3>Indexing for filters</h3>
+<h3 id="indexing-for-filters">Indexing for filters</h3>
 <p>Every query on a filtered entity now includes the filter predicate, so your indexes must account for it:</p>
 <ul>
   <li><b>Multi-tenancy</b>: put <code>TenantId</code> <b>first</b> in your composite indexes: <code>(TenantId, CustomerId, PlacedUtc)</code>.</li>
@@ -150,7 +158,7 @@ var bin = await db.Orders.IgnoreQueryFilters([&quot;SoftDelete&quot;]).Where(o =
 <div class="callout warn"><span class="title">Filters and required navigations</span>
 If <code>Customer</code> is soft-deleted and <code>Order.Customer</code> is a <i>required</i> navigation, an <code>Include(o =&gt; o.Customer)</code> uses an INNER JOIN, and the customer's filter makes those orders disappear from the results. Either filter both sides consistently or make the navigation optional. EF warns about this in the model validation logs.</div>
 
-<h2>Custom conventions</h2>
+<h2 id="custom-conventions">Custom conventions</h2>
 <p>Conventions let you encode team rules once. For example, "every entity with a <code>TenantId</code> gets an index on it":</p>
 
 <pre><code class="language-csharp">public sealed class TenantIndexConvention : IModelFinalizingConvention
@@ -174,7 +182,7 @@ protected override void ConfigureConventions(ModelConfigurationBuilder configura
 <p>You can also <b>remove</b> conventions you don't want. For example, <code>configurationBuilder.Conventions.Remove(typeof(ForeignKeyIndexConvention));</code> stops automatic FK indexes when you manage all indexes yourself. Do this only deliberately.</p>
 
 <div class="takeaways">
-  <h2 class="box-title">🔑 Key takeaways</h2>
+  <h2 class="box-title" id="key-takeaways">🔑 Key takeaways</h2>
   <ul>
     <li>Interceptors centralize cross-cutting logic but run on every operation. Keep them cheap, and override both sync and async hooks.</li>
     <li>Global query filters implement soft delete and tenancy. EF 10 adds named filters you can disable individually.</li>
@@ -183,9 +191,9 @@ protected override void ConfigureConventions(ModelConfigurationBuilder configura
   </ul>
 </div>
 
-<h2>Exercise</h2>
+<h2 id="exercise">Exercise</h2>
 <div class="exercise">
-  <h3 class="box-title">🛠 Production-grade cross-cutting concerns</h3>
+  <h3 class="box-title" id="production-grade-cross-cutting-concerns">🛠 Production-grade cross-cutting concerns</h3>
   <ol>
     <li>Add <code>IsDeleted</code> and <code>TenantId</code> to <code>Order</code> and <code>Customer</code>, with named filters (EF 10) or a combined filter (EF 8/9).</li>
     <li>Override delete behaviour: in a <code>SaveChangesInterceptor</code>, turn <code>EntityState.Deleted</code> into a modification that sets <code>IsDeleted = true</code>.</li>
@@ -206,7 +214,7 @@ protected override void ConfigureConventions(ModelConfigurationBuilder configura
   </details>
 </div>
 
-<h2>Quiz</h2>
+<h2 id="quiz">Quiz</h2>
 
 <div class="quiz" data-answer="c">
 <p class="q">Where is the tenant id from a context field evaluated in a global query filter?</p>
@@ -241,12 +249,13 @@ protected override void ConfigureConventions(ModelConfigurationBuilder configura
 <p class="explain">Equality columns first (TenantId, CustomerId), then the sort column.</p>
 </div>
 
-<h2>Further reading</h2>
+<h2 id="further-reading">Further reading</h2>
 <ul>
   <li><a href="https://learn.microsoft.com/ef/core/logging-events-diagnostics/interceptors" target="_blank" rel="noopener">Interceptors</a></li>
   <li><a href="https://learn.microsoft.com/ef/core/querying/filters" target="_blank" rel="noopener">Global query filters</a></li>
   <li><a href="https://learn.microsoft.com/ef/core/modeling/bulk-configuration#conventions" target="_blank" rel="noopener">Custom conventions</a></li>
 </ul>
+<p class="reviewed">Last reviewed October 2026 against EF Core 10 (LTS). Spotted an error? Select it, right-click, and ask the AI tutor to double-check it, or open an issue in the repository.</p>
 </article>
 <nav id="pager" aria-label="Lesson navigation"></nav>
 </main>

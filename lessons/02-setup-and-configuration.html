@@ -2,15 +2,23 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src https:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Setup, Configuration &amp;amp; Logging SQL · EF Core Optimization Course</title>
-<meta name="description" content="Setup, Configuration &amp;amp; Logging SQL: a lesson from the EF Core Optimization Course.">
+<title>Setup, Configuration &amp; Logging SQL · EF Core Optimization Course</title>
+<meta name="description" content="Before you optimize anything you need to see the SQL EF Core runs. This lesson covers registering a DbContext properly, the options worth knowing, and making EF show you what it&#x27;s doing.">
+<meta property="og:title" content="Setup, Configuration &amp; Logging SQL">
+<meta property="og:description" content="Before you optimize anything you need to see the SQL EF Core runs. This lesson covers registering a DbContext properly, the options worth knowing, and making EF show you what it&#x27;s doing.">
+<meta property="og:type" content="article">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="../assets/css/course.css">
+<script src="../assets/js/theme-init.js"></script>
 </head>
 <body data-lesson="2" data-root="../">
+<a class="skip-link" href="#main">Skip to content</a>
 <div class="layout">
 <nav id="sidebar" aria-label="Lessons"></nav>
-<main class="content">
+<main class="content" id="main">
+<noscript><p class="callout warn">Navigation, quizzes and progress tracking need JavaScript. The lesson text below still works without it.</p></noscript>
 <article>
 <h1>Setup, Configuration &amp; Logging SQL</h1>
 <p class="lead">Before you optimize anything you need to see the SQL EF Core runs. This lesson covers registering a DbContext properly, the options worth knowing, and making EF show you what it's doing.</p>
@@ -23,7 +31,7 @@
 </div>
 
 <div class="objectives">
-  <h2 class="box-title">By the end of this lesson you will be able to</h2>
+  <h2 class="box-title" id="by-the-end-of-this-lesson-you-will-be-able-to">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Register a DbContext in ASP.NET Core with the right lifetime.</li>
     <li>Configure provider options: connection strings, timeouts, retries.</li>
@@ -32,7 +40,7 @@
   </ul>
 </div>
 
-<h2>Registering the DbContext</h2>
+<h2 id="registering-the-dbcontext">Registering the DbContext</h2>
 <p>In ASP.NET Core, register the context with dependency injection. <code>AddDbContext</code> registers it with a <b>scoped</b> lifetime: one instance per HTTP request. That's exactly the unit-of-work lifetime you want.</p>
 
 <pre data-label="Program.cs"><code class="language-csharp">var builder = WebApplication.CreateBuilder(args);
@@ -61,7 +69,7 @@ builder.Services.AddDbContext&lt;ShopContext&gt;(options =&gt;
 <li>Don't inject a scoped DbContext into a singleton service such as a hosted <code>BackgroundService</code>. Inject <code>IDbContextFactory&lt;T&gt;</code> or <code>IServiceScopeFactory</code> and create a short-lived context per unit of work.</li>
 </ul></div>
 
-<h3>When you need a factory</h3>
+<h3 id="when-you-need-a-factory">When you need a factory</h3>
 <p>Blazor Server, background workers and parallel processing need several short-lived contexts inside one scope. Register a factory:</p>
 
 <pre><code class="language-csharp">builder.Services.AddDbContextFactory&lt;ShopContext&gt;(o =&gt; o.UseSqlServer(connStr));
@@ -76,10 +84,10 @@ public class NightlyReportJob(IDbContextFactory&lt;ShopContext&gt; factory) : Ba
     }
 }</code></pre>
 
-<h2>Seeing the SQL</h2>
+<h2 id="seeing-the-sql">Seeing the SQL</h2>
 <p>This is the most important habit in the whole course: <b>always know what SQL your code produces</b>. There are several ways to see it.</p>
 
-<h3>1. <code>LogTo</code>: quick and simple</h3>
+<h3 id="s-1-logto-quick-and-simple">1. <code>LogTo</code>: quick and simple</h3>
 
 <pre><code class="language-csharp">options.UseSqlServer(connStr)
        .LogTo(Console.WriteLine, LogLevel.Information);</code></pre>
@@ -91,7 +99,7 @@ public class NightlyReportJob(IDbContextFactory&lt;ShopContext&gt; factory) : Ba
     new[] { DbLoggerCategory.Database.Command.Name },
     LogLevel.Information);</code></pre>
 
-<h3>2. ASP.NET Core logging: the production-friendly way</h3>
+<h3 id="s-2-asp-net-core-logging-the-production-friendly-way">2. ASP.NET Core logging: the production-friendly way</h3>
 <p><code>AddDbContext</code> automatically picks up the application's <code>ILoggerFactory</code>. Control verbosity in <code>appsettings.Development.json</code>:</p>
 
 <pre><code class="language-json">{
@@ -109,12 +117,12 @@ public class NightlyReportJob(IDbContextFactory&lt;ShopContext&gt; factory) : Ba
       Executed DbCommand (4ms) [Parameters=[@customerId=&#x27;42&#x27;], CommandType=&#x27;Text&#x27;, CommandTimeout=&#x27;30&#x27;]
       SELECT [o].[Id], [o].[CustomerId], ... FROM [Orders] AS [o] WHERE [o].[CustomerId] = @customerId</code></pre>
 
-<h3>3. <code>ToQueryString()</code>: inspect without executing</h3>
+<h3 id="s-3-toquerystring-inspect-without-executing">3. <code>ToQueryString()</code>: inspect without executing</h3>
 
 <pre><code class="language-csharp">var query = db.Orders.Where(o =&gt; o.Total &gt; 100).OrderBy(o =&gt; o.PlacedUtc);
 Console.WriteLine(query.ToQueryString());   // great in unit tests and in the debugger</code></pre>
 
-<h2>Diagnostic options</h2>
+<h2 id="diagnostic-options">Diagnostic options</h2>
 <table>
   <thead><tr><th scope="col">Option</th><th scope="col">What it does</th><th scope="col">Production?</th></tr></thead>
   <tbody>
@@ -143,7 +151,7 @@ Console.WriteLine(query.ToQueryString());   // great in unit tests and in the de
 <div class="callout tip"><span class="title">Turn performance warnings into errors in development</span>
 EF logs warnings for risky patterns. Examples: loading several collections in one query (cartesian explosion), and <code>First()</code> without <code>OrderBy</code> (<code>CoreEventId.FirstWithoutOrderByAndFilterWarning</code>). Throwing on these in development catches problems before they reach production.</div>
 
-<h2>Connection pooling: already on</h2>
+<h2 id="connection-pooling-already-on">Connection pooling: already on</h2>
 <p>ADO.NET providers pool physical database connections by default. Opening and closing a <code>SqlConnection</code> just borrows from and returns to the pool. EF opens the connection as late as possible and closes it as early as possible, which is the right behaviour. Tune pool size in the connection string (<code>Max Pool Size</code>, default 100 for SqlClient) only if you see pool exhaustion errors under load.</p>
 <div class="callout info"><span class="title">Connection pooling ≠ DbContext pooling</span>
 Connection pooling (ADO.NET) reuses database connections. DbContext pooling (EF, Lesson 20) reuses <code>DbContext</code> objects. They solve different problems and work together.</div>
@@ -152,7 +160,7 @@ Connection pooling (ADO.NET) reuses database connections. DbContext pooling (EF,
 This lesson covers just enough configuration to get started. <b>Level 2 · Configuration</b> covers the rest in depth: the options pipeline and design-time tools (Lesson 5), connection strings, secrets and pooling (Lesson 6), provider-specific settings (Lesson 7), model configuration at scale (Lesson 8), and environments and testing (Lesson 9).</div>
 
 <div class="takeaways">
-  <h2 class="box-title">🔑 Key takeaways</h2>
+  <h2 class="box-title" id="key-takeaways">🔑 Key takeaways</h2>
   <ul>
     <li>Register the context with <code>AddDbContext</code> (scoped). Use a factory for singletons and background work.</li>
     <li>Always know your SQL: <code>LogTo</code>, ILogger categories, and <code>ToQueryString()</code>.</li>
@@ -161,9 +169,9 @@ This lesson covers just enough configuration to get started. <b>Level 2 · Confi
   </ul>
 </div>
 
-<h2>Exercise</h2>
+<h2 id="exercise">Exercise</h2>
 <div class="exercise">
-  <h3 class="box-title">🛠 Make EF talk</h3>
+  <h3 class="box-title" id="make-ef-talk">🛠 Make EF talk</h3>
   <ol>
     <li>Add <code>LogTo</code> filtered to <code>DbLoggerCategory.Database.Command</code> in your playground.</li>
     <li>Run <code>db.Customers.FirstAsync()</code>. What warning appears, and what SQL is generated?</li>
@@ -175,7 +183,7 @@ This lesson covers just enough configuration to get started. <b>Level 2 · Confi
   </details>
 </div>
 
-<h2>Quiz</h2>
+<h2 id="quiz">Quiz</h2>
 
 <div class="quiz" data-answer="b">
 <p class="q">What lifetime does <code>AddDbContext</code> use by default?</p>
@@ -210,12 +218,13 @@ This lesson covers just enough configuration to get started. <b>Level 2 · Confi
 <p class="explain">Hosted services are singletons. A factory gives you correctly scoped, short-lived contexts.</p>
 </div>
 
-<h2>Further reading</h2>
+<h2 id="further-reading">Further reading</h2>
 <ul>
   <li><a href="https://learn.microsoft.com/ef/core/dbcontext-configuration/" target="_blank" rel="noopener">DbContext lifetime, configuration and initialization</a></li>
   <li><a href="https://learn.microsoft.com/ef/core/logging-events-diagnostics/simple-logging" target="_blank" rel="noopener">Simple logging</a></li>
   <li><a href="https://learn.microsoft.com/ef/core/miscellaneous/connection-strings" target="_blank" rel="noopener">Connection strings</a></li>
 </ul>
+<p class="reviewed">Last reviewed October 2026 against EF Core 10 (LTS). Spotted an error? Select it, right-click, and ask the AI tutor to double-check it, or open an issue in the repository.</p>
 </article>
 <nav id="pager" aria-label="Lesson navigation"></nav>
 </main>

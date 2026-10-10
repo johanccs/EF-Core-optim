@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src https:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Indexes &amp; Migrations · EF Core Optimization Course</title>
+<meta name="description" content="Perfect LINQ on top of a missing index is still slow. This lesson covers defining indexes in your EF model, designing them for your queries, and shipping schema changes safely.">
+<meta property="og:title" content="Indexes &amp; Migrations">
+<meta property="og:description" content="Perfect LINQ on top of a missing index is still slow. This lesson covers defining indexes in your EF model, designing them for your queries, and shipping schema changes safely.">
+<meta property="og:type" content="article">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/course.css">
+<script src="../assets/js/theme-init.js"></script>
+</head>
+<body data-lesson="14" data-root="../">
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="layout">
+<nav id="sidebar" aria-label="Lessons"></nav>
+<main class="content" id="main">
+<noscript><p class="callout warn">Navigation, quizzes and progress tracking need JavaScript. The lesson text below still works without it.</p></noscript>
+<article>
+<h1>Indexes &amp; Migrations</h1>
+<p class="lead">Perfect LINQ on top of a missing index is still slow. This lesson covers defining indexes in your EF model, designing them for your queries, and shipping schema changes safely.</p>
+<div class="meta"><span class="badge">⏱ 35 min</span></div>
+
+<div class="goal">
+  <span class="title">🎯 Goal of this lesson</span>
+  <p>Learn to <b>design indexes from your queries</b>, define them in the EF model, and deploy schema changes safely.</p>
+  <p><b>Why it matters:</b> Perfect LINQ on top of a missing index is still a full table scan. Indexes are usually the largest single lever on query speed, and migrations are how they reach production safely.</p>
+</div>
+
+<div class="objectives">
+  <h2 class="box-title" id="by-the-end-of-this-lesson-you-will-be-able-to">By the end of this lesson you will be able to</h2>
+  <ul>
+    <li>Define unique, composite, filtered, descending and covering indexes with the Fluent API.</li>
+    <li>Design indexes from your actual query patterns.</li>
+    <li>Recognize LINQ patterns that prevent index use.</li>
+    <li>Deploy migrations safely with SQL scripts and migration bundles.</li>
+  </ul>
+</div>
+
+<h2 id="indexes-in-the-ef-model">Indexes in the EF model</h2>
+<p>EF creates indexes for primary keys and foreign keys by convention. Every other index comes from you:</p>
+
+<pre><code class="language-csharp">modelBuilder.Entity&lt;Customer&gt;(b =&gt;
+{
+    // Unique index
+    b.HasIndex(c =&gt; c.Email).IsUnique();
+
+    // Named index
+    b.HasIndex(c =&gt; c.CreatedUtc).HasDatabaseName(&quot;IX_Customers_Created&quot;);
+});
+
+modelBuilder.Entity&lt;Order&gt;(b =&gt;
+{
+    // Composite index: column order matters!
+    b.HasIndex(o =&gt; new { o.CustomerId, o.PlacedUtc });
+
+    // Filtered (partial) index: only &quot;open&quot; orders
+    b.HasIndex(o =&gt; o.PlacedUtc)
+     .HasFilter(&quot;[Status] = 0&quot;)                     // SQL Server syntax; PostgreSQL: &quot;\&quot;Status\&quot; = 0&quot;
+     .HasDatabaseName(&quot;IX_Orders_Pending_Placed&quot;);
+
+    // Descending index (EF Core 7+)
+    b.HasIndex(o =&gt; new { o.PlacedUtc, o.Id }).IsDescending(true, true);
+});
+
+modelBuilder.Entity&lt;Product&gt;(b =&gt;
+{
+    // Covering index: SQL Server INCLUDE columns
+    b.HasIndex(p =&gt; p.CategoryId)
+     .IncludeProperties(p =&gt; new { p.Name, p.Price });
+});</code></pre>
+
+<h2 id="designing-indexes-from-queries">Designing indexes from queries</h2>
+<p>Index design starts from the queries, not the tables. For each important query, look at its <code>WHERE</code>, <code>JOIN</code>, <code>ORDER BY</code> and <code>SELECT</code> columns.</p>
+
+<h3 id="composite-index-column-order">Composite index column order</h3>
+<p>An index on <code>(CustomerId, PlacedUtc)</code> is like a phone book sorted by last name, then first name. It efficiently supports:</p>
+<ul>
+  <li><code>WHERE CustomerId = @x</code> ✅</li>
+  <li><code>WHERE CustomerId = @x ORDER BY PlacedUtc DESC</code> ✅ (no sort needed)</li>
+  <li><code>WHERE CustomerId = @x AND PlacedUtc &gt; @d</code> ✅</li>
+  <li><code>WHERE PlacedUtc &gt; @d</code> ❌ (can't seek on the second column alone)</li>
+</ul>
+<p>Rule of thumb: <b>equality columns first, then range or sort columns</b>.</p>
+
+<h3 id="covering-indexes-and-projections">Covering indexes and projections</h3>
+<p>When an index contains every column a query needs, the database never touches the base table, so there are no key lookups. That's why projections (Lesson 11) and covering indexes work so well together:</p>
+
+<pre><code class="language-csharp">// Served entirely by IX_Products_CategoryId INCLUDE (Name, Price)
+db.Products.Where(p =&gt; p.CategoryId == id).Select(p =&gt; new { p.Id, p.Name, p.Price });</code></pre>
+
+<h2 id="linq-that-defeats-indexes">LINQ that defeats indexes</h2>
+<table>
+  <thead><tr><th scope="col">Pattern</th><th scope="col">SQL</th><th scope="col">Why it hurts</th><th scope="col">Alternative</th></tr></thead>
+  <tbody>
+  <tr><td><code>c.Name.Contains(x)</code></td><td><code>LIKE '%x%'</code></td><td>Leading wildcard means a full scan</td><td><code>StartsWith</code> → <code>LIKE 'x%'</code>, or full-text search</td></tr>
+  <tr><td><code>o.PlacedUtc.Year == 2025</code></td><td><code>DATEPART(year, …) = 2025</code></td><td>A function on the column isn't sargable</td><td><code>o.PlacedUtc &gt;= new DateTime(2025,1,1) &amp;&amp; o.PlacedUtc &lt; new DateTime(2026,1,1)</code></td></tr>
+  <tr><td><code>c.Email.ToLower() == x</code></td><td><code>LOWER([Email]) = @x</code></td><td>Function on the column</td><td>Use a case-insensitive collation (the SQL Server default) and compare directly</td></tr>
+  <tr><td>Type mismatch (varchar column, nvarchar param)</td><td><code>CONVERT_IMPLICIT</code></td><td>Index scan instead of seek</td><td>Configure <code>IsUnicode(false)</code> in the model (Lesson 3)</td></tr>
+  <tr><td><code>a == x || b == y</code></td><td><code>OR</code> across columns</td><td>Often a scan</td><td>Separate indexes, or <code>Concat</code>/<code>Union</code> of two queries</td></tr>
+  </tbody>
+</table>
+
+<div class="callout tip"><span class="title">Let the database tell you</span>
+SQL Server's missing-index DMVs (<code>sys.dm_db_missing_index_details</code>), Query Store, and PostgreSQL's <code>pg_stat_statements</code> plus <code>EXPLAIN ANALYZE</code> show which indexes your workload actually needs. Treat their suggestions as hints and avoid duplicate or overlapping indexes. Every index makes inserts and updates slower.</div>
+
+<h2 id="migrations">Migrations</h2>
+
+<pre><code class="language-bash">dotnet ef migrations add AddOrderIndexes
+dotnet ef migrations list
+dotnet ef migrations remove            # undo last (if not applied)</code></pre>
+<p>Always <b>review the generated migration</b>. Look for unintended table rebuilds, column drops caused by renames (EF may see a rename as drop plus add), and data-type changes on large tables.</p>
+
+<h3 id="deploying-migrations-safely">Deploying migrations safely</h3>
+<table>
+  <thead><tr><th scope="col">Approach</th><th scope="col">How</th><th scope="col">Production?</th></tr></thead>
+  <tbody>
+  <tr><td><code>context.Database.Migrate()</code> at startup</td><td>The app migrates itself on boot</td><td>⚠ Not recommended for production: the app needs DDL permissions, startup gets slower, and a failed migration takes the app down. EF 9+ takes a lock so instances don't migrate concurrently, but the other risks remain. OK for dev and simple apps.</td></tr>
+  <tr><td><b>Idempotent SQL script</b></td><td><code>dotnet ef migrations script --idempotent -o migrate.sql</code></td><td>✅ Reviewable by a DBA and runnable from CI/CD</td></tr>
+  <tr><td><b>Migration bundle</b></td><td><code>dotnet ef migrations bundle --self-contained -r linux-x64</code> → <code>./efbundle --connection "..."</code></td><td>✅ A single executable, ideal for pipelines</td></tr>
+  </tbody>
+</table>
+
+<h3 id="large-table-operations">Large-table operations</h3>
+<p>Creating an index on a 100M-row table can lock it. On SQL Server Enterprise or Azure SQL, use online index builds:</p>
+
+<pre><code class="language-csharp">b.HasIndex(o =&gt; o.PlacedUtc).IsCreatedOnline();      // SQL Server: WITH (ONLINE = ON)</code></pre>
+<p>For risky changes, use custom SQL in the migration with <code>migrationBuilder.Sql(...)</code>, and split schema changes into expand and contract phases: add a column, backfill it, switch the code over, then drop the old column.</p>
+
+<div class="takeaways">
+  <h2 class="box-title" id="key-takeaways">🔑 Key takeaways</h2>
+  <ul>
+    <li>Design indexes from your queries: equality columns first, then range or sort columns.</li>
+    <li>Use covering (<code>INCLUDE</code>), filtered and descending indexes where queries allow.</li>
+    <li>Avoid non-sargable predicates: functions on columns, leading wildcards, type mismatches.</li>
+    <li>Ship schema changes as reviewed scripts or bundles, not <code>Migrate()</code> at production startup.</li>
+  </ul>
+</div>
+
+<h2 id="exercise">Exercise</h2>
+<div class="exercise">
+  <h3 class="box-title" id="index-for-your-queries">🛠 Index for your queries</h3>
+  <p>Design the indexes for these three queries, add them to the model, and generate a migration:</p>
+  <ol>
+    <li>A customer's orders, newest first: <code>Where(o =&gt; o.CustomerId == id).OrderByDescending(o =&gt; o.PlacedUtc)</code></li>
+    <li>The pending orders queue, oldest first: <code>Where(o =&gt; o.Status == OrderStatus.Pending).OrderBy(o =&gt; o.PlacedUtc)</code></li>
+    <li>A product search by SKU prefix that projects Id, Name and Price.</li>
+  </ol>
+  <details><summary>Show solution</summary>
+
+<pre><code class="language-csharp">modelBuilder.Entity&lt;Order&gt;(b =&gt;
+{
+    b.HasIndex(o =&gt; new { o.CustomerId, o.PlacedUtc }).IsDescending(false, true);
+    b.HasIndex(o =&gt; o.PlacedUtc).HasFilter(&quot;[Status] = 0&quot;).HasDatabaseName(&quot;IX_Orders_PendingQueue&quot;);
+});
+modelBuilder.Entity&lt;Product&gt;()
+    .HasIndex(p =&gt; p.Sku).IsUnique().IncludeProperties(p =&gt; new { p.Name, p.Price });
+// and use p.Sku.StartsWith(prefix) → LIKE &#x27;prefix%&#x27; (index seek)</code></pre>
+  <p>Note: the FK convention originally created an index on <code>CustomerId</code> alone. When you add a composite index that <i>starts</i> with <code>CustomerId</code>, EF sees that the FK is already covered and stops creating the separate index. Your migration will drop <code>IX_Orders_CustomerId</code>, which means one less index to maintain on every write.</p>
+  </details>
+</div>
+
+<h2 id="quiz">Quiz</h2>
+
+<div class="quiz" data-answer="c">
+<p class="q">An index exists on <code>(CustomerId, PlacedUtc)</code>. Which query can't use it for a seek?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. <code>WHERE CustomerId = 5</code></button>
+<button class="opt" type="button" data-opt="b">B. <code>WHERE CustomerId = 5 ORDER BY PlacedUtc</code></button>
+<button class="opt" type="button" data-opt="c">C. <code>WHERE PlacedUtc &gt; &#x27;2025-01-01&#x27;</code></button>
+<button class="opt" type="button" data-opt="d">D. <code>WHERE CustomerId = 5 AND PlacedUtc &gt; &#x27;2025-01-01&#x27;</code></button>
+</div>
+<p class="explain">Composite indexes can only seek using a leading prefix of their columns.</p>
+</div>
+
+<div class="quiz" data-answer="b">
+<p class="q">Which LINQ filter is index-friendly (sargable)?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. <code>o.PlacedUtc.Year == 2025</code></button>
+<button class="opt" type="button" data-opt="b">B. <code>o.PlacedUtc &gt;= start &amp;&amp; o.PlacedUtc &lt; end</code></button>
+<button class="opt" type="button" data-opt="c">C. <code>c.Name.ToUpper() == &quot;BOB&quot;</code></button>
+<button class="opt" type="button" data-opt="d">D. <code>c.Name.Contains(&quot;bob&quot;)</code></button>
+</div>
+<p class="explain">A range on the raw column can use an index seek. Functions on the column, and leading wildcards, can't.</p>
+</div>
+
+<div class="quiz" data-answer="d">
+<p class="q">Which is the recommended way to apply migrations in production?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. Call <code>Database.EnsureCreated()</code> at startup</button>
+<button class="opt" type="button" data-opt="b">B. Call <code>Database.Migrate()</code> from every app instance at startup</button>
+<button class="opt" type="button" data-opt="c">C. Delete and recreate the database</button>
+<button class="opt" type="button" data-opt="d">D. Generate an idempotent SQL script or a migration bundle and run it from your deployment pipeline</button>
+</div>
+<p class="explain">Scripts and bundles are reviewable, run once, and don't need the app to have DDL rights.</p>
+</div>
+
+<h2 id="further-reading">Further reading</h2>
+<ul>
+  <li><a href="https://learn.microsoft.com/ef/core/modeling/indexes" target="_blank" rel="noopener">Indexes</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/managing-schemas/migrations/applying" target="_blank" rel="noopener">Applying migrations</a></li>
+  <li><a href="https://use-the-index-luke.com/" target="_blank" rel="noopener">Use The Index, Luke (free SQL indexing book)</a></li>
+</ul>
+<p class="reviewed">Last reviewed October 2026 against EF Core 10 (LTS). Spotted an error? Select it, right-click, and ask the AI tutor to double-check it, or open an issue in the repository.</p>
+</article>
+<nav id="pager" aria-label="Lesson navigation"></nav>
+</main>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="../assets/js/course.js"></script>
+<script src="../assets/js/ai-assistant.js"></script>
+</body>
+</html>

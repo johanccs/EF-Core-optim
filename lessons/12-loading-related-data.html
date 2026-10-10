@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src https:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loading Related Data &amp; the N+1 Problem · EF Core Optimization Course</title>
+<meta name="description" content="How you load related entities decides whether a page sends 1 query or 1,001. This lesson covers EF Core&#x27;s three loading strategies and how to find and fix the N+1 problem.">
+<meta property="og:title" content="Loading Related Data &amp; the N+1 Problem">
+<meta property="og:description" content="How you load related entities decides whether a page sends 1 query or 1,001. This lesson covers EF Core&#x27;s three loading strategies and how to find and fix the N+1 problem.">
+<meta property="og:type" content="article">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/course.css">
+<script src="../assets/js/theme-init.js"></script>
+</head>
+<body data-lesson="12" data-root="../">
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="layout">
+<nav id="sidebar" aria-label="Lessons"></nav>
+<main class="content" id="main">
+<noscript><p class="callout warn">Navigation, quizzes and progress tracking need JavaScript. The lesson text below still works without it.</p></noscript>
+<article>
+<h1>Loading Related Data &amp; the N+1 Problem</h1>
+<p class="lead">How you load related entities decides whether a page sends 1 query or 1,001. This lesson covers EF Core's three loading strategies and how to find and fix the N+1 problem.</p>
+<div class="meta"><span class="badge">⏱ 35 min</span></div>
+
+<div class="goal">
+  <span class="title">🎯 Goal of this lesson</span>
+  <p>Learn the three ways to <b>load related data</b>, and how to recognize and eliminate the N+1 query problem.</p>
+  <p><b>Why it matters:</b> N+1 is the most common cause of slow pages in ORM-based apps. A page that sends 1,000 queries instead of 1 is slow no matter how fast each query is.</p>
+</div>
+
+<div class="objectives">
+  <h2 class="box-title" id="by-the-end-of-this-lesson-you-will-be-able-to">By the end of this lesson you will be able to</h2>
+  <ul>
+    <li>Use eager (<code>Include</code>/<code>ThenInclude</code>), explicit and lazy loading correctly.</li>
+    <li>Recognize and fix N+1 query patterns.</li>
+    <li>Use filtered includes to limit loaded children.</li>
+    <li>Decide when lazy loading is acceptable, which is rarely.</li>
+  </ul>
+</div>
+
+<h2 id="the-n-1-problem">The N+1 problem</h2>
+<p>N+1 means one query to fetch a list, plus one extra query <b>per item</b> to fetch related data. With 100 orders, that's 101 round trips. Even at 1 ms each, the latency adds up, and on a cloud database with 2–5 ms latency the page takes half a second just waiting on the network.</p>
+
+<div class="compare">
+  <div class="bad"><span class="tag">❌ N+1 (explicit form)</span>
+
+<pre><code class="language-csharp">var orders = await db.Orders
+    .Where(o =&gt; o.Status == OrderStatus.Paid)
+    .ToListAsync();                         // 1 query
+
+foreach (var o in orders)
+{
+    var customer = await db.Customers
+        .FindAsync(o.CustomerId);           // N queries
+    Console.WriteLine(customer!.Name);
+}</code></pre>
+  </div>
+  <div class="good"><span class="tag">✅ One query</span>
+
+<pre><code class="language-csharp">var rows = await db.Orders
+    .Where(o =&gt; o.Status == OrderStatus.Paid)
+    .Select(o =&gt; new { o.Id, o.Customer.Name })
+    .ToListAsync();                         // 1 query (JOIN)
+
+foreach (var r in rows)
+    Console.WriteLine(r.Name);</code></pre>
+  </div>
+</div>
+
+<h2 id="strategy-1-eager-loading-with-include">Strategy 1: Eager loading with Include</h2>
+<p>Use eager loading when you need <b>entities</b>, typically to modify them, together with their related data.</p>
+
+<pre><code class="language-csharp">var order = await db.Orders
+    .Include(o =&gt; o.Customer)
+    .Include(o =&gt; o.Lines)
+        .ThenInclude(l =&gt; l.Product)
+    .SingleAsync(o =&gt; o.Id == id);</code></pre>
+
+<pre data-label="Generated SQL (single query)"><code class="language-sql">SELECT [o].*, [c].*, [s].*
+FROM (SELECT TOP(2) ... FROM [Orders] WHERE [Id] = @id) AS [o]
+INNER JOIN [Customers] AS [c] ON [o].[CustomerId] = [c].[Id]
+LEFT JOIN (
+    SELECT [o0].*, [p].* FROM [OrderLines] AS [o0]
+    INNER JOIN [Products] AS [p] ON [o0].[ProductId] = [p].[Id]
+) AS [s] ON [o].[Id] = [s].[OrderId]
+ORDER BY [o].[Id], [c].[Id], [s].[Id]</code></pre>
+
+<h3 id="filtered-include">Filtered include</h3>
+<p>Load only the children you need. <code>Where</code>, <code>OrderBy</code>, <code>Skip</code> and <code>Take</code> are supported inside <code>Include</code>:</p>
+
+<pre><code class="language-csharp">var customers = await db.Customers
+    .Include(c =&gt; c.Orders
+        .Where(o =&gt; o.Status != OrderStatus.Cancelled)
+        .OrderByDescending(o =&gt; o.PlacedUtc)
+        .Take(5))
+    .ToListAsync();</code></pre>
+<div class="callout warn"><span class="title">Filtered include + tracking</span>
+With tracking, if some of a customer's other orders were already tracked by the context, they'll still appear in <code>customer.Orders</code> through navigation fix-up, even though they don't match the filter. Use <code>AsNoTracking()</code>, or a fresh context, when the filtered collection must be exact.</div>
+
+<h3 id="don-t-over-include">Don't over-include</h3>
+<p>Every <code>Include</code> fetches <b>all columns</b> of the related table. Including collections multiplies rows (cartesian explosion, Lesson 15). For read-only screens, a projection (Lesson 11) is almost always better than a chain of <code>Include</code> calls.</p>
+
+<h2 id="strategy-2-explicit-loading">Strategy 2: Explicit loading</h2>
+<p>Load a navigation later, on demand, for an already-tracked entity:</p>
+
+<pre><code class="language-csharp">var customer = await db.Customers.SingleAsync(c =&gt; c.Id == id);
+
+if (needOrders)
+{
+    await db.Entry(customer)
+        .Collection(c =&gt; c.Orders)
+        .Query()                                  // optional: compose further
+        .Where(o =&gt; o.PlacedUtc &gt; DateTime.UtcNow.AddMonths(-3))
+        .LoadAsync();
+}
+
+// Count without loading the collection
+var orderCount = await db.Entry(customer).Collection(c =&gt; c.Orders).Query().CountAsync();</code></pre>
+<p>Explicit loading is fine for a <b>single</b> entity. Doing it inside a loop is N+1 again.</p>
+
+<h2 id="strategy-3-lazy-loading">Strategy 3: Lazy loading</h2>
+<p>With lazy loading, a navigation property loads itself from the database the first time you access it. It needs the <code>Microsoft.EntityFrameworkCore.Proxies</code> package, <code>UseLazyLoadingProxies()</code>, and <code>virtual</code> navigation properties.</p>
+
+<pre><code class="language-csharp">// 1. Configuration (Program.cs)
+options.UseSqlServer(connStr).UseLazyLoadingProxies();
+
+// 2. Entities: navigation properties must be virtual (Order.cs)
+//    public virtual Customer Customer { get; set; } = null!;
+//    public virtual List&lt;OrderLine&gt; Lines { get; set; } = new();
+
+// 3. Usage: looks innocent...
+decimal total = 0;
+foreach (var order in await db.Orders.ToListAsync())
+    total += order.Lines.Sum(l =&gt; l.UnitPrice);   // ⚠ a hidden query per order = N+1</code></pre>
+
+<div class="callout danger"><span class="title">Why most teams disable lazy loading</span>
+<ul>
+<li>It hides database calls behind property access, so N+1 creeps in silently.</li>
+<li>JSON serializers walk every navigation, which can trigger dozens of queries or circular references.</li>
+<li>Lazy loads are synchronous I/O: there's no <code>await</code>, so a thread blocks.</li>
+<li>Accessing a navigation after the context is disposed throws.</li>
+</ul>
+If you do use it, turn on detection: EF logs <code>CoreEventId.LazyLoadOnDisposedContextWarning</code>, and you can throw on <code>CoreEventId.NavigationLazyLoading</code> in tests to find lazy loads.</div>
+
+<h2 id="comparing-the-strategies">Comparing the strategies</h2>
+<table>
+  <thead><tr><th scope="col">Aspect</th><th scope="col">Eager (Include)</th><th scope="col">Explicit</th><th scope="col">Lazy</th><th scope="col">Projection</th></tr></thead>
+  <tbody>
+  <tr><td>Round trips</td><td>1 (or a few with split queries)</td><td>1 per Load call</td><td>1 per navigation access</td><td>1</td></tr>
+  <tr><td>Columns fetched</td><td>All</td><td>All</td><td>All</td><td>Only what's selected</td></tr>
+  <tr><td>Tracked</td><td>Yes (unless AsNoTracking)</td><td>Yes</td><td>Yes</td><td>No</td></tr>
+  <tr><td>Best for</td><td>Load-modify-save of a graph</td><td>Conditional loading of one entity</td><td>Prototypes, desktop apps with care</td><td>Reads, APIs, reports</td></tr>
+  </tbody>
+</table>
+
+<h2 id="detecting-n-1">Detecting N+1</h2>
+<ul>
+  <li><b>Logs</b>: repeated identical SQL with only the parameter changing is the giveaway.</li>
+  <li><b>Count commands per request</b>: a <code>DbCommandInterceptor</code> (Lesson 24) can count queries and warn above a threshold.</li>
+  <li><b>APM / OpenTelemetry traces</b>: a request span with dozens of child DB spans (Lesson 19).</li>
+  <li><b>Integration tests</b>: assert the number of commands executed by an endpoint.</li>
+</ul>
+
+<div class="takeaways">
+  <h2 class="box-title" id="key-takeaways">🔑 Key takeaways</h2>
+  <ul>
+    <li>N+1 means one query per item. It's the most common ORM performance bug.</li>
+    <li>Use projections for reads, <code>Include</code> (optionally filtered) to load graphs you'll modify, and explicit loading for single entities.</li>
+    <li>Lazy loading hides queries behind property access. Avoid it, or detect it in tests.</li>
+    <li>Detect N+1 with logs, traces, or a command-counting test.</li>
+  </ul>
+</div>
+
+<h2 id="exercise">Exercise</h2>
+<div class="exercise">
+  <h3 class="box-title" id="kill-the-n-1">🛠 Kill the N+1</h3>
+  <p>This code builds an "invoice" view. Count the queries, then rewrite it as one query.</p>
+
+<pre><code class="language-csharp">var orders = await db.Orders.Where(o =&gt; o.CustomerId == customerId).ToListAsync();
+var result = new List&lt;InvoiceDto&gt;();
+foreach (var o in orders)
+{
+    var lines = await db.OrderLines.Where(l =&gt; l.OrderId == o.Id).ToListAsync();
+    var items = new List&lt;string&gt;();
+    foreach (var l in lines)
+    {
+        var p = await db.Products.FindAsync(l.ProductId);
+        items.Add($&quot;{l.Quantity} x {p!.Name}&quot;);
+    }
+    result.Add(new InvoiceDto(o.Id, o.PlacedUtc, items));
+}</code></pre>
+  <details><summary>Show solution</summary>
+  <p>The original runs 1 + N + N×M queries. FindAsync can skip some if products are already tracked. For 10 orders with 3 lines each, that's up to 41 queries. Rewritten:</p>
+
+<pre><code class="language-csharp">var result = await db.Orders
+    .Where(o =&gt; o.CustomerId == customerId)
+    .Select(o =&gt; new InvoiceDto(
+        o.Id,
+        o.PlacedUtc,
+        o.Lines.Select(l =&gt; l.Quantity + &quot; x &quot; + l.Product.Name).ToList()))
+    .ToListAsync();</code></pre>
+  <p>It's one query, and the string concatenation is translated to SQL as well.</p>
+  </details>
+</div>
+
+<h2 id="quiz">Quiz</h2>
+
+<div class="quiz" data-answer="c">
+<p class="q">A page lists 200 orders and shows each customer's name using lazy loading. How many queries run, worst case?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. 1</button>
+<button class="opt" type="button" data-opt="b">B. 2</button>
+<button class="opt" type="button" data-opt="c">C. 201</button>
+<button class="opt" type="button" data-opt="d">D. 400</button>
+</div>
+<p class="explain">1 query for the orders, plus 1 per distinct customer not already tracked. Worst case that's 200 more.</p>
+</div>
+
+<div class="quiz" data-answer="a">
+<p class="q">What happens to <code>Include()</code> when the query ends with a projection to a DTO?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. It's ignored. The projection decides what's loaded.</button>
+<button class="opt" type="button" data-opt="b">B. It loads the related entities into the DTO automatically</button>
+<button class="opt" type="button" data-opt="c">C. EF throws an exception</button>
+<button class="opt" type="button" data-opt="d">D. It forces a split query</button>
+</div>
+<p class="explain">Include only affects queries that return entity types.</p>
+</div>
+
+<div class="quiz" data-answer="b">
+<p class="q">Which of these is supported inside a filtered <code>Include</code>?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. <code>GroupBy</code></button>
+<button class="opt" type="button" data-opt="b">B. <code>Where</code>, <code>OrderBy</code>, <code>Skip</code> and <code>Take</code></button>
+<button class="opt" type="button" data-opt="c">C. <code>Join</code></button>
+<button class="opt" type="button" data-opt="d">D. <code>Distinct</code> only</button>
+</div>
+<p class="explain">Filtered include (EF Core 5+) supports Where, OrderBy/ThenBy (and descending), Skip and Take.</p>
+</div>
+
+<h2 id="further-reading">Further reading</h2>
+<ul>
+  <li><a href="https://learn.microsoft.com/ef/core/querying/related-data/" target="_blank" rel="noopener">Loading related data</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/performance/efficient-querying#beware-of-lazy-loading" target="_blank" rel="noopener">Beware of lazy loading</a></li>
+</ul>
+<p class="reviewed">Last reviewed October 2026 against EF Core 10 (LTS). Spotted an error? Select it, right-click, and ask the AI tutor to double-check it, or open an issue in the repository.</p>
+</article>
+<nav id="pager" aria-label="Lesson navigation"></nav>
+</main>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="../assets/js/course.js"></script>
+<script src="../assets/js/ai-assistant.js"></script>
+</body>
+</html>

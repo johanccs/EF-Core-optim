@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src https:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Benchmarking &amp; the Production Checklist · EF Core Optimization Course</title>
+<meta name="description" content="The final lesson turns everything into a repeatable practice. You&#x27;ll benchmark EF code properly, protect performance with tests, and finish with a checklist and a capstone project.">
+<meta property="og:title" content="Benchmarking &amp; the Production Checklist">
+<meta property="og:description" content="The final lesson turns everything into a repeatable practice. You&#x27;ll benchmark EF code properly, protect performance with tests, and finish with a checklist and a capstone project.">
+<meta property="og:type" content="article">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/course.css">
+<script src="../assets/js/theme-init.js"></script>
+</head>
+<body data-lesson="25" data-root="../">
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="layout">
+<nav id="sidebar" aria-label="Lessons"></nav>
+<main class="content" id="main">
+<noscript><p class="callout warn">Navigation, quizzes and progress tracking need JavaScript. The lesson text below still works without it.</p></noscript>
+<article>
+<h1>Benchmarking &amp; the Production Checklist</h1>
+<p class="lead">The final lesson turns everything into a repeatable practice. You'll benchmark EF code properly, protect performance with tests, and finish with a checklist and a capstone project.</p>
+<div class="meta"><span class="badge">⏱ 45 min + capstone</span></div>
+
+<div class="goal">
+  <span class="title">🎯 Goal of this lesson</span>
+  <p>Turn everything into a <b>repeatable practice</b>: benchmark correctly, protect performance with automated tests, and audit an application with a complete checklist.</p>
+  <p><b>Why it matters:</b> Performance work only lasts if it's measured and guarded. This lesson gives you the tools to prove an improvement and keep it from regressing.</p>
+</div>
+
+<div class="objectives">
+  <h2 class="box-title" id="by-the-end-of-this-lesson-you-will-be-able-to">By the end of this lesson you will be able to</h2>
+  <ul>
+    <li>Write reliable micro-benchmarks for EF Core with BenchmarkDotNet.</li>
+    <li>Load-test endpoints and interpret the results.</li>
+    <li>Guard against performance regressions in automated tests.</li>
+    <li>Audit an application with a complete EF Core performance checklist.</li>
+  </ul>
+</div>
+
+<h2 id="benchmarking-with-benchmarkdotnet">Benchmarking with BenchmarkDotNet</h2>
+<p><code>Stopwatch</code> loops lie. They include JIT time, ignore GC, and suffer from noise. <a href="https://benchmarkdotnet.org/" target="_blank" rel="noopener">BenchmarkDotNet</a> handles warm-up, statistics and memory measurement for you.</p>
+
+<pre data-label="Benchmarks.cs"><code class="language-csharp">using BenchmarkDotNet.Attributes;
+using BenchmarkDotNet.Running;
+
+[MemoryDiagnoser]
+public class ReadBenchmarks
+{
+    private PooledDbContextFactory&lt;ShopContext&gt; _factory = null!;
+
+    private static readonly Func&lt;ShopContext, int, IAsyncEnumerable&lt;ProductListItem&gt;&gt; Compiled =
+        EF.CompileAsyncQuery((ShopContext db, int cat) =&gt;
+            db.Products.Where(p =&gt; p.CategoryId == cat)
+                       .Select(p =&gt; new ProductListItem(p.Id, p.Name, p.Price, p.Category.Name)));
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        var options = new DbContextOptionsBuilder&lt;ShopContext&gt;()
+            .UseSqlServer(&quot;Server=localhost;Database=ShopBench;Trusted_Connection=True;TrustServerCertificate=True&quot;)
+            .Options;
+        _factory = new PooledDbContextFactory&lt;ShopContext&gt;(options);
+        // Seed once here (or beforehand) with realistic volumes.
+    }
+
+    [Benchmark(Baseline = true)]
+    public async Task&lt;int&gt; Tracking()
+    {
+        await using var db = _factory.CreateDbContext();
+        return (await db.Products.Where(p =&gt; p.CategoryId == 1).ToListAsync()).Count;
+    }
+
+    [Benchmark]
+    public async Task&lt;int&gt; NoTracking()
+    {
+        await using var db = _factory.CreateDbContext();
+        return (await db.Products.AsNoTracking().Where(p =&gt; p.CategoryId == 1).ToListAsync()).Count;
+    }
+
+    [Benchmark]
+    public async Task&lt;int&gt; Projection()
+    {
+        await using var db = _factory.CreateDbContext();
+        return (await db.Products.Where(p =&gt; p.CategoryId == 1)
+            .Select(p =&gt; new ProductListItem(p.Id, p.Name, p.Price, p.Category.Name)).ToListAsync()).Count;
+    }
+
+    [Benchmark]
+    public async Task&lt;int&gt; CompiledProjection()
+    {
+        await using var db = _factory.CreateDbContext();
+        var n = 0;
+        await foreach (var _ in Compiled(db, 1)) n++;
+        return n;
+    }
+}
+
+public static class Program
+{
+    public static void Main(string[] args) =&gt; BenchmarkRunner.Run&lt;ReadBenchmarks&gt;();
+}</code></pre>
+
+<pre><code class="language-bash">dotnet run -c Release</code></pre>
+
+<div class="callout warn"><span class="title">Benchmarking rules</span>
+<ul>
+<li>Always run in <b>Release</b>, with no debugger attached.</li>
+<li>Benchmark against the <b>real provider</b> (SQL Server or PostgreSQL in a container), never the InMemory provider. It has completely different performance characteristics.</li>
+<li>Use <b>realistic data volumes and distributions</b>. 10 rows tell you nothing.</li>
+<li>Look at <b>Allocated</b> as well as Mean. GC pressure hurts throughput under load.</li>
+<li>Remember network latency. A local database hides round-trip costs that dominate in the cloud.</li>
+</ul></div>
+
+<h2 id="load-testing">Load testing</h2>
+<p>Micro-benchmarks compare techniques. Load tests show how the whole system behaves under concurrency, including connection pool limits, locks and thread-pool starvation.</p>
+
+<pre data-label="k6 script (load.js)"><code class="language-javascript">import http from &#x27;k6/http&#x27;;
+import { check } from &#x27;k6&#x27;;
+
+export const options = { vus: 50, duration: &#x27;60s&#x27; };
+
+export default function () {
+  const res = http.get(&#x27;https://localhost:5001/api/products?categoryId=1&#x27;);
+  check(res, { &#x27;status 200&#x27;: (r) =&gt; r.status === 200 });
+}</code></pre>
+<p>Track <b>p95/p99 latency</b> and throughput, not averages, and watch the database side (CPU, waits, blocking) at the same time.</p>
+
+<h2 id="guarding-against-regressions">Guarding against regressions</h2>
+<p>Performance fixes erode as code changes. Lock the important ones in with integration tests, using <a href="https://dotnet.testcontainers.org/" target="_blank" rel="noopener">Testcontainers</a> for a real database:</p>
+
+<pre><code class="language-csharp">public sealed class CommandCounter : DbCommandInterceptor
+{
+    public int Count;
+
+    public override InterceptionResult&lt;DbDataReader&gt; ReaderExecuting(
+        DbCommand c, CommandEventData e, InterceptionResult&lt;DbDataReader&gt; r)
+    { Interlocked.Increment(ref Count); return r; }
+
+    public override ValueTask&lt;InterceptionResult&lt;DbDataReader&gt;&gt; ReaderExecutingAsync(
+        DbCommand c, CommandEventData e, InterceptionResult&lt;DbDataReader&gt; r, CancellationToken ct = default)
+    { Interlocked.Increment(ref Count); return ValueTask.FromResult(r); }
+    // Add NonQueryExecuting/ScalarExecuting overrides to also count ExecuteUpdate/ExecuteDelete/ExecuteSql.
+}
+
+[Fact]
+public async Task Order_list_endpoint_runs_a_single_query()
+{
+    var counter = new CommandCounter();
+    await using var db = CreateContext(o =&gt; o.AddInterceptors(counter));
+
+    var result = await new OrderQueries(db).GetRecentOrdersAsync(customerId: 1);
+
+    Assert.NotEmpty(result);
+    Assert.Equal(1, counter.Count);          // catches an N+1 the day someone introduces it
+}
+
+[Fact]
+public void Product_list_query_does_not_select_description()
+{
+    using var db = CreateContext();
+    var sql = new ProductQueries(db).ListQuery(categoryId: 1).ToQueryString();
+    Assert.DoesNotContain(&quot;[Description]&quot;, sql);
+}</code></pre>
+
+<h2 id="the-ef-core-performance-checklist">The EF Core performance checklist</h2>
+
+<h3 id="configuration">Configuration</h3>
+<ul>
+  <li>☐ DbContext is scoped (or created from a factory), never a singleton.</li>
+  <li>☐ <code>EnableSensitiveDataLogging</code> and <code>EnableDetailedErrors</code> are off in production.</li>
+  <li>☐ Retry-on-failure is enabled for cloud databases, and manual transactions run inside the execution strategy.</li>
+  <li>☐ Performance warnings (multiple collection include, etc.) are configured to throw in development.</li>
+  <li>☐ DbContext pooling is considered for high-throughput services, and the context has no stray state.</li>
+  <li>☐ Database settings are bound to validated options with <code>ValidateOnStart</code>. Misconfiguration fails the deploy, not the first request.</li>
+  <li>☐ No credentials in source control. Secrets come from a vault or environment, and managed identity is used where available.</li>
+  <li>☐ Connection strings set <code>Application Name</code> and keep <code>Encrypt</code> on, and there's no <code>TrustServerCertificate</code> in production.</li>
+  <li>☐ Provider settings match the server: compatibility level / PostgreSQL version, command timeout, UTC timestamps.</li>
+  <li>☐ A database readiness health check exists, and liveness doesn't depend on the database.</li>
+</ul>
+
+<h3 id="model">Model</h3>
+<ul>
+  <li>☐ Strings have max lengths, non-Unicode where appropriate, and decimals have explicit precision.</li>
+  <li>☐ Indexes exist for the WHERE, JOIN and ORDER BY patterns of the hot queries. Composite column order is correct.</li>
+  <li>☐ Covering or filtered indexes are used where projections and filters allow.</li>
+  <li>☐ The inheritance strategy fits the query patterns (TPH by default, TPC for leaf queries).</li>
+  <li>☐ A compiled model is used for large models, generated automatically.</li>
+</ul>
+
+<h3 id="queries">Queries</h3>
+<ul>
+  <li>☐ Every list endpoint is paged with a server-enforced maximum. Keyset paging is used for deep or infinite lists.</li>
+  <li>☐ Read paths use projections or <code>AsNoTracking</code>.</li>
+  <li>☐ There's no N+1. Lazy loading is off, or monitored.</li>
+  <li>☐ Filtering and aggregation run in the database. There's no premature <code>ToList()</code> or <code>IEnumerable</code>.</li>
+  <li>☐ Multiple collection loads use split queries or projections, measured.</li>
+  <li>☐ Dynamic queries are parameterized, and the query cache hit rate is close to 100%.</li>
+  <li>☐ Async APIs are used with <code>CancellationToken</code> in web code.</li>
+</ul>
+
+<h3 id="writes">Writes</h3>
+<ul>
+  <li>☐ There's no <code>SaveChanges</code> inside loops. Changes are batched.</li>
+  <li>☐ <code>ExecuteUpdate</code>/<code>ExecuteDelete</code> are used for set-based changes.</li>
+  <li>☐ Bulk copy is used for large imports. Long-running imports clear the change tracker.</li>
+  <li>☐ Optimistic concurrency protects contended entities.</li>
+  <li>☐ Transactions are short, with no external I/O inside them.</li>
+</ul>
+
+<h3 id="operations">Operations</h3>
+<ul>
+  <li>☐ Slow-query logging, query tags, and OpenTelemetry traces and metrics are in place.</li>
+  <li>☐ Query Store or <code>pg_stat_statements</code> is enabled and reviewed regularly.</li>
+  <li>☐ Migrations are deployed as scripts or bundles, not <code>Migrate()</code> at startup.</li>
+  <li>☐ Warm-up runs before readiness. Benchmarks and query-count tests run in CI.</li>
+</ul>
+
+<div class="takeaways">
+  <h2 class="box-title" id="key-takeaways">🔑 Key takeaways</h2>
+  <ul>
+    <li>Benchmark with BenchmarkDotNet, in Release, against the real provider, with realistic data.</li>
+    <li>Load test for p95/p99 latency and throughput while watching the database.</li>
+    <li>Lock in fixes with tests: command counts, generated-SQL assertions.</li>
+    <li>Use the checklist to audit configuration, model, queries, writes and operations.</li>
+  </ul>
+</div>
+
+<h2 id="capstone-project">🏆 Capstone project</h2>
+<div class="exercise">
+  <h3 class="box-title" id="optimize-slowshop">Optimize "SlowShop"</h3>
+  <p>Build, or take from your playground, an API with these deliberately slow endpoints, then apply the course:</p>
+  <ol>
+    <li><b>GET /products?page=N</b>: loads all products with <code>Include(Category)</code>, pages in memory, and returns entities including Description.<br><i>Target: projection, keyset paging, covering index.</i></li>
+    <li><b>GET /customers/{id}/dashboard</b>: lazy loads orders and lines, and computes totals in C#.<br><i>Target: one projected query with database-side aggregation.</i></li>
+    <li><b>POST /orders/import</b>: inserts 20,000 orders with <code>SaveChanges</code> per row.<br><i>Target: batched saves with chunking, or bulk copy.</i></li>
+    <li><b>POST /products/reprice</b>: loads every product in a category, updates the price, and saves.<br><i>Target: <code>ExecuteUpdateAsync</code>.</i></li>
+    <li><b>GET /search?filters=…</b>: builds dynamic expressions with <code>Expression.Constant</code>.<br><i>Target: parameterized filters, verified with a cache hit-rate metric.</i></li>
+  </ol>
+  <p>For each endpoint, record <b>before and after</b>: query count, rows read, p95 latency under load, and allocated memory. Write a short report of what you changed and why. That report is evidence you can now tune EF Core in production.</p>
+</div>
+
+<h2 id="final-quiz">Final quiz</h2>
+
+<div class="quiz" data-answer="c">
+<p class="q">Why shouldn't you benchmark EF Core performance with the InMemory provider?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. It doesn't support async</button>
+<button class="opt" type="button" data-opt="b">B. It's slower than SQL Server</button>
+<button class="opt" type="button" data-opt="c">C. It has completely different performance characteristics: no SQL, no network, no query plans</button>
+<button class="opt" type="button" data-opt="d">D. BenchmarkDotNet doesn't support it</button>
+</div>
+<p class="explain">InMemory is a test double. Measure with the real database provider.</p>
+</div>
+
+<div class="quiz" data-answer="a">
+<p class="q">What's the most robust way to stop an N+1 regression from coming back?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. An integration test that asserts the number of commands executed</button>
+<button class="opt" type="button" data-opt="b">B. A code comment</button>
+<button class="opt" type="button" data-opt="c">C. Enabling lazy loading</button>
+<button class="opt" type="button" data-opt="d">D. Increasing the connection pool size</button>
+</div>
+<p class="explain">A command-counting interceptor in a test fails the build the moment extra queries appear.</p>
+</div>
+
+<div class="quiz" data-answer="d">
+<p class="q">In a load test, which metric best reflects user experience?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. Average latency</button>
+<button class="opt" type="button" data-opt="b">B. Minimum latency</button>
+<button class="opt" type="button" data-opt="c">C. Total requests sent</button>
+<button class="opt" type="button" data-opt="d">D. p95/p99 latency together with throughput</button>
+</div>
+<p class="explain">Averages hide tail latency. Users notice the slow requests.</p>
+</div>
+
+<div class="callout tip"><span class="title">🎉 Congratulations</span>
+You've worked through EF Core from first principles to expert tuning. Keep the checklist close, measure before and after each change, and read each release's "What's new" page. Every EF version adds new optimizations and translations.</div>
+
+<h2 id="further-reading">Further reading</h2>
+<ul>
+  <li><a href="https://learn.microsoft.com/ef/core/performance/" target="_blank" rel="noopener">EF Core performance docs (all sections)</a></li>
+  <li><a href="https://benchmarkdotnet.org/articles/overview.html" target="_blank" rel="noopener">BenchmarkDotNet</a></li>
+  <li><a href="https://grafana.com/docs/k6/latest/" target="_blank" rel="noopener">k6 load testing</a></li>
+  <li><a href="https://dotnet.testcontainers.org/" target="_blank" rel="noopener">Testcontainers for .NET</a></li>
+  <li><a href="https://github.com/dotnet/efcore" target="_blank" rel="noopener">EF Core on GitHub</a></li>
+</ul>
+<p class="reviewed">Last reviewed October 2026 against EF Core 10 (LTS). Spotted an error? Select it, right-click, and ask the AI tutor to double-check it, or open an issue in the repository.</p>
+</article>
+<nav id="pager" aria-label="Lesson navigation"></nav>
+</main>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="../assets/js/course.js"></script>
+<script src="../assets/js/ai-assistant.js"></script>
+</body>
+</html>

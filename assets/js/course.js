@@ -48,6 +48,8 @@
     { id: 25, level: 5, slug: "25-benchmarking-and-checklist",   title: "Benchmarking & the Production Checklist", summary: "BenchmarkDotNet, load testing, final checklist." }
   ];
 
+  var VERSION = "1.1.0";   // bump on every release; keep package.json in sync
+
   var STORE_KEY = "efcourse.completed.v2";   // v2: lessons renumbered when the Configuration level was added
   var THEME_KEY = "efcourse.theme";
 
@@ -95,6 +97,7 @@
     bar.innerHTML =
       '<button type="button" class="icon-btn" id="menu-btn" aria-label="Toggle lesson menu">☰</button>' +
       '<a class="brand" href="' + root + 'index.html"><span class="logo">EF</span><span>EF Core Optimization</span></a>' +
+      '<span class="version" title="Course version">v' + VERSION + '</span>' +
       '<span class="spacer"></span>' +
       '<span class="progress-pill" id="progress-pill"></span>' +
       '<button type="button" class="icon-btn" id="theme-btn" aria-label="Toggle dark mode"></button>';
@@ -151,6 +154,82 @@
       // Scroll only the sidebar (scrollIntoView would also scroll the page)
       nav.scrollTop = Math.max(0, active.offsetTop - nav.clientHeight / 2);
     }
+  }
+
+  /* ---------- Sidebar resize and collapse (desktop) ---------- */
+  var SIDEBAR_KEY = "efcourse.sidebar";
+  var SIDEBAR_MIN = 200, SIDEBAR_MAX = 560, SIDEBAR_DEFAULT = 300;
+  function wireSidebarResize() {
+    var nav = document.getElementById("sidebar");
+    if (!nav) return;
+    var docEl = document.documentElement;
+    var state = load(SIDEBAR_KEY, {});
+    var width = typeof state.w === "number" ? clampWidth(state.w) : SIDEBAR_DEFAULT;
+
+    var rail = el("aside", { "class": "sidebar-rail", "aria-label": "Lesson menu size" });
+    rail.innerHTML =
+      '<div class="sidebar-resizer" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="sidebar"' +
+      ' aria-label="Resize lesson menu" aria-valuemin="' + SIDEBAR_MIN + '" aria-valuemax="' + SIDEBAR_MAX + '"' +
+      ' title="Drag to resize · double-click to reset"></div>' +
+      '<button type="button" class="sidebar-toggle" aria-controls="sidebar"></button>';
+    nav.parentNode.insertBefore(rail, nav.nextSibling);
+    var handle = rail.querySelector(".sidebar-resizer");
+    var toggle = rail.querySelector(".sidebar-toggle");
+
+    function clampWidth(w) { return Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(w))); }
+    function collapsed() { return docEl.classList.contains("sidebar-collapsed"); }
+    function persist() { save(SIDEBAR_KEY, { w: width, collapsed: collapsed() }); }
+    function apply() {
+      docEl.style.setProperty("--sidebar-w", width + "px");
+      handle.setAttribute("aria-valuenow", String(width));
+      var c = collapsed();
+      toggle.textContent = c ? "»" : "«";
+      toggle.setAttribute("aria-label", c ? "Show lesson menu" : "Hide lesson menu");
+      toggle.title = c ? "Show lesson menu" : "Hide lesson menu";
+      toggle.setAttribute("aria-expanded", c ? "false" : "true");
+      handle.hidden = c;
+    }
+    function setCollapsed(c) { docEl.classList.toggle("sidebar-collapsed", c); apply(); persist(); }
+    apply();
+
+    toggle.addEventListener("click", function () { setCollapsed(!collapsed()); });
+
+    handle.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      handle.setPointerCapture(e.pointerId);
+      body.classList.add("sidebar-resizing");
+      var left = nav.getBoundingClientRect().left;
+      function move(ev) {
+        var raw = ev.clientX - left;
+        if (raw < SIDEBAR_MIN / 2) return;          // far left: collapse on release
+        width = clampWidth(raw);
+        apply();
+      }
+      function up(ev) {
+        handle.removeEventListener("pointermove", move);
+        handle.removeEventListener("pointerup", up);
+        handle.removeEventListener("pointercancel", up);
+        body.classList.remove("sidebar-resizing");
+        if (ev.type === "pointerup" && ev.clientX - left < SIDEBAR_MIN / 2) setCollapsed(true);
+        else persist();
+      }
+      handle.addEventListener("pointermove", move);
+      handle.addEventListener("pointerup", up);
+      handle.addEventListener("pointercancel", up);
+    });
+    handle.addEventListener("dblclick", function () { width = SIDEBAR_DEFAULT; apply(); persist(); });
+    handle.addEventListener("keydown", function (e) {
+      var step = e.shiftKey ? 60 : 20;
+      if (e.key === "ArrowLeft") width = clampWidth(width - step);
+      else if (e.key === "ArrowRight") width = clampWidth(width + step);
+      else if (e.key === "Home") width = SIDEBAR_MIN;
+      else if (e.key === "End") width = SIDEBAR_MAX;
+      else return;
+      e.preventDefault();
+      apply();
+      persist();
+    });
   }
 
   /* ---------- Full-text search ---------- */
@@ -411,12 +490,14 @@
   window.EFCourse = {
     lesson: LESSONS.filter(function (l) { return l.id === currentId; })[0] || null,
     levels: LEVELS,
+    version: VERSION,
     root: root
   };
 
   buildTopbar();
   addAnchors();
   buildSidebar();
+  wireSidebarResize();
   decorateLesson();
   buildHome();
   updateProgressPill();

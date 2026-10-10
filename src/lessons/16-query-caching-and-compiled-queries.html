@@ -1,0 +1,206 @@
+<h1>Query Caching, Parameters &amp; Compiled Queries</h1>
+<p class="lead">Translating LINQ into SQL is the most expensive thing EF does in-process. EF caches the result, but only if your queries cooperate. This lesson covers how the query cache works, how to pollute it by accident, how collection parameters are translated, and when compiled queries help.</p>
+<div class="meta"><span class="badge">⏱ 35 min</span></div>
+
+<div class="objectives">
+  <h4>By the end of this lesson you will be able to</h4>
+  <ul>
+    <li>Explain the two caches involved: EF's query cache and the database plan cache.</li>
+    <li>Avoid query cache pollution from constants in dynamically built expressions.</li>
+    <li>Control parameterization with <code>EF.Constant</code> and <code>EF.Parameter</code>.</li>
+    <li>Understand how collections in <code>Contains</code> are translated, and the EF Core 10 changes.</li>
+    <li>Use <code>EF.CompileAsyncQuery</code> on hot paths.</li>
+  </ul>
+</div>
+
+<h2>Two caches</h2>
+<ol>
+  <li><b>EF's compiled query cache</b> (in your process). Key: the expression tree <i>shape</i>. Value: the generated SQL plus the materializer. A miss means full LINQ translation, which costs anywhere from microseconds to milliseconds of CPU.</li>
+  <li><b>The database's plan cache.</b> Key: the SQL text. A miss means the optimizer compiles a new execution plan, which costs CPU on the database server.</li>
+</ol>
+<p>Both caches work best when the same query shape produces the <b>same SQL text with different parameter values</b>.</p>
+
+<h2>Constants vs parameters</h2>
+<p>EF decides from the expression tree:</p>
+<ul>
+  <li><b>Captured variables</b> (closures) become <b>parameters</b>: <code>Where(p =&gt; p.Id == id)</code> → <code>WHERE [p].[Id] = @__id_0</code></li>
+  <li><b>Literals</b> become <b>constants</b> inlined in the SQL: <code>Where(p =&gt; p.Status == 1)</code> → <code>WHERE [p].[Status] = 1</code></li>
+</ul>
+<p>Literals in hand-written LINQ are fine, because the shape never changes. The problem appears when you build expressions dynamically:</p>
+
+<div class="compare">
+  <div class="bad"><span class="tag">❌ New query (and plan) per value</span>
+
+```csharp
+static Expression<Func<Product, bool>>
+    PriceAbove(decimal min)
+{
+    var p = Expression.Parameter(typeof(Product));
+    var body = Expression.GreaterThan(
+        Expression.Property(p, nameof(Product.Price)),
+        Expression.Constant(min));     // literal!
+    return Expression.Lambda<Func<Product, bool>>(body, p);
+}
+// WHERE [p].[Price] > 10.0
+// WHERE [p].[Price] > 10.5   ← different SQL each time
+```
+  </div>
+  <div class="good"><span class="tag">✅ One cached query</span>
+
+```csharp
+static Expression<Func<Product, bool>>
+    PriceAbove(decimal min)
+{
+    // Let the compiler create the closure for you
+    return p => p.Price > min;
+}
+// WHERE [p].[Price] > @__min_0
+```
+  </div>
+</div>
+
+<p>If you really have to build trees by hand, for a generic filter or a search builder, wrap values in a closure-like object so EF sees member access rather than a constant:</p>
+
+```csharp
+var holder = new { Value = min };
+var valueExpr = Expression.Property(Expression.Constant(holder), "Value");   // parameterized by EF
+```
+
+<h3>Forcing the choice: EF.Constant and EF.Parameter</h3>
+
+```csharp
+// Force a parameter to be inlined as a constant (EF 8+).
+// Useful when the value is low-cardinality and a value-specific plan helps.
+var q1 = db.Orders.Where(o => o.Status == EF.Constant(status));
+
+// Force a literal to be sent as a parameter (EF 9+)
+var q2 = db.Orders.Where(o => o.Total > EF.Parameter(100m));
+```
+
+<div class="callout tip"><span class="title">Check your hit rate</span>
+The <code>Microsoft.EntityFrameworkCore</code> metrics (Lesson 14) include the compiled query cache hit rate. In steady state it should be close to 100%. A persistently low value means something is generating unique query shapes.</div>
+
+<h2>Collections: <code>Contains</code> translation</h2>
+<p>A very common query is "rows whose id is in this list":</p>
+
+```csharp
+int[] ids = [1, 7, 42, 99];
+var orders = await db.Orders.Where(o => ids.Contains(o.Id)).ToListAsync();
+```
+<p>Translation has changed across versions, and it matters for both caches:</p>
+<table>
+  <tr><th>Version</th><th>Default SQL</th><th>Notes</th></tr>
+  <tr><td>EF Core ≤ 7</td><td><code>WHERE [Id] IN (1, 7, 42, 99)</code></td><td>Constants: a different SQL text for every distinct list, which pollutes the plan cache.</td></tr>
+  <tr><td>EF Core 8–9</td><td><code>WHERE [Id] IN (SELECT [value] FROM OPENJSON(@__ids_0) ...)</code></td><td>One JSON parameter and one SQL text, but the optimizer can't see how many values there are, which sometimes produces poor plans.</td></tr>
+  <tr><td><b>EF Core 10</b></td><td><code>WHERE [Id] IN (@ids1, @ids2, @ids3, @ids4)</code></td><td>Multiple scalar parameters. The optimizer gets cardinality information, and EF pads the parameter count to limit the number of distinct SQL shapes.</td></tr>
+</table>
+<p>You can override the default globally or per query:</p>
+
+```csharp
+// Globally (EF 10)
+options.UseSqlServer(connStr, o => o.UseParameterizedCollectionMode(ParameterTranslationMode.Parameter));  // JSON array
+
+// Per query
+db.Orders.Where(o => EF.Constant(ids).Contains(o.Id));    // inline constants
+db.Orders.Where(o => EF.Parameter(ids).Contains(o.Id));   // single JSON parameter
+```
+<div class="callout warn"><span class="title">Very large lists</span>
+SQL Server allows at most about 2,100 parameters per command. For lists with thousands of values, use the single JSON-parameter mode, a table-valued parameter through raw SQL, or bulk-insert the ids into a temp table and JOIN.</div>
+
+<h2>Compiled queries</h2>
+<p>Even with a cache hit, EF still compares the incoming expression tree with cached trees and extracts parameters. For extremely hot queries you can skip that work with an explicitly compiled query:</p>
+
+```csharp
+public class ShopQueries
+{
+    // Compile once: store in a static field
+    public static readonly Func<ShopContext, int, Task<Product?>> ProductById =
+        EF.CompileAsyncQuery((ShopContext db, int id) =>
+            db.Products.AsNoTracking().FirstOrDefault(p => p.Id == id));
+
+    public static readonly Func<ShopContext, int, IAsyncEnumerable<Order>> OrdersForCustomer =
+        EF.CompileAsyncQuery((ShopContext db, int customerId) =>
+            db.Orders.AsNoTracking().Where(o => o.CustomerId == customerId).OrderBy(o => o.Id));
+}
+
+// Usage
+var product = await ShopQueries.ProductById(db, 42);
+await foreach (var o in ShopQueries.OrdersForCustomer(db, 7)) { /* ... */ }
+```
+
+<ul>
+  <li>The gain is CPU per execution, typically a few microseconds. It's visible only for very hot, simple queries at high throughput.</li>
+  <li>Compiled queries are less flexible: no dynamic composition after compilation, and a fixed parameter list.</li>
+  <li>Always benchmark (Lesson 20) before adopting them widely.</li>
+</ul>
+
+<h2>Dynamic queries and shape explosion</h2>
+<p>Conditional composition is normal and fine, but each combination of applied filters is a distinct shape. Ten optional filters can produce up to 2<sup>10</sup> = 1,024 shapes. That's usually acceptable. Just don't add <b>value-dependent</b> shapes on top, like the constant problem above.</p>
+
+```csharp
+IQueryable<Product> q = db.Products;
+if (filter.CategoryId is int c) q = q.Where(p => p.CategoryId == c);      // parameter: good
+if (filter.MaxPrice is decimal m) q = q.Where(p => p.Price <= m);         // parameter: good
+```
+
+<h2>Exercise</h2>
+<div class="exercise">
+  <h4>🛠 Find the cache polluter</h4>
+  <ol>
+    <li>Write a generic <code>WhereEquals&lt;T&gt;(string property, object value)</code> helper using <code>Expression.Constant</code>. Call it in a loop with 500 different values and watch the log: how many distinct SQL texts do you get?</li>
+    <li>Fix it using the closure-holder technique and confirm there's one SQL text.</li>
+    <li>Benchmark <code>db.Products.FirstOrDefaultAsync(p =&gt; p.Id == id)</code> against the compiled <code>ProductById</code> (Lesson 20 shows the harness).</li>
+  </ol>
+  <details><summary>Fixed helper</summary>
+
+```csharp
+public static IQueryable<T> WhereEquals<T>(this IQueryable<T> source, string property, object value)
+{
+    var param = Expression.Parameter(typeof(T), "x");
+    var member = Expression.Property(param, property);
+    var holder = Activator.CreateInstance(typeof(ValueHolder<>).MakeGenericType(member.Type), value)!;
+    var valueExpr = Expression.Property(Expression.Constant(holder), "Value");
+    var body = Expression.Equal(member, valueExpr);
+    return source.Where(Expression.Lambda<Func<T, bool>>(body, param));
+}
+
+public sealed class ValueHolder<TValue>(TValue value) { public TValue Value { get; } = value; }
+```
+  </details>
+</div>
+
+<h2>Quiz</h2>
+
+:::quiz b
+`Where(p => p.Price > min)`, where `min` is a local variable, generates…
+a) A SQL literal with the value of `min`
+b) A SQL parameter
+c) A client-side filter
+d) A compiled query automatically
+> Captured variables become parameters, so the query shape is stable across values.
+:::
+
+:::quiz d
+What's the risk of using `Expression.Constant(value)` in dynamically built filters?
+a) It throws at runtime
+b) The filter runs client-side
+c) It disables tracking
+d) Each distinct value creates a new query shape: EF cache misses and new database plans
+> Constants are inlined, so every value is a new SQL text and a new compilation.
+:::
+
+:::quiz c
+How does EF Core 10 translate `ids.Contains(o.Id)` on SQL Server by default?
+a) As inlined constants `IN (1, 2, 3)`
+b) As one JSON parameter with OPENJSON
+c) As multiple scalar parameters `IN (@ids1, @ids2, ...)`, padded to limit distinct shapes
+d) As a temp table
+> EF 10 switched the default to multiple parameters, which gives the optimizer cardinality information. The mode is configurable.
+:::
+
+<h2>Further reading</h2>
+<ul>
+  <li><a href="https://learn.microsoft.com/ef/core/performance/advanced-performance-topics#compiled-queries" target="_blank" rel="noopener">Compiled queries</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/performance/advanced-performance-topics#dynamically-constructed-queries" target="_blank" rel="noopener">Dynamically-constructed queries</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/what-is-new/ef-core-10.0/whatsnew" target="_blank" rel="noopener">What's new in EF Core 10 (parameterized collections)</a></li>
+</ul>

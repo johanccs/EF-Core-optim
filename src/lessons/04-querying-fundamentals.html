@@ -1,0 +1,191 @@
+<h1>Querying Fundamentals</h1>
+<p class="lead">Knowing where a query runs is the foundation of EF Core performance: in the database, or in your application's memory. This lesson covers deferred execution, <code>IQueryable</code> versus <code>IEnumerable</code>, client evaluation and async.</p>
+<div class="meta"><span class="badge">⏱ 30 min</span></div>
+
+<div class="objectives">
+  <h4>By the end of this lesson you will be able to</h4>
+  <ul>
+    <li>Tell when a query executes, and avoid executing it twice.</li>
+    <li>Keep filtering, sorting and aggregation in the database.</li>
+    <li>Recognize accidental client-side evaluation.</li>
+    <li>Use async queries, streaming and the right terminal operators.</li>
+  </ul>
+</div>
+
+<h2>Deferred execution</h2>
+<p>An <code>IQueryable&lt;T&gt;</code> is a <b>description</b> of a query. Each operator (<code>Where</code>, <code>OrderBy</code>, <code>Select</code>) adds to the expression tree. Nothing runs until a <b>terminal operation</b> enumerates it:</p>
+<ul>
+  <li>Materializers: <code>ToList</code>, <code>ToArray</code>, <code>ToDictionary</code> (and their async versions)</li>
+  <li>Single-result operators: <code>First</code>, <code>Single</code>, <code>Any</code>, <code>Count</code>, <code>Sum</code>, <code>Max</code>…</li>
+  <li><code>foreach</code> / <code>await foreach</code></li>
+</ul>
+
+```csharp
+IQueryable<Order> query = db.Orders.Where(o => o.Status == OrderStatus.Paid);
+
+if (minTotal is not null)
+    query = query.Where(o => o.Total >= minTotal);      // composable: still no SQL
+
+if (sortByDate)
+    query = query.OrderByDescending(o => o.PlacedUtc);
+
+var page = await query.Take(50).ToListAsync();          // ONE SQL query here
+```
+
+<div class="callout warn"><span class="title">Enumerating twice runs the query twice</span>
+
+```csharp
+var paid = db.Orders.Where(o => o.Status == OrderStatus.Paid);
+var count = paid.Count();          // query 1: SELECT COUNT(*)
+foreach (var o in paid) { }        // query 2: SELECT ...
+var list = paid.ToList();          // query 3: SELECT ...
+```
+Materialize once with <code>ToList()</code> if you need the data several times. If you only need a count, ask the database for the count and nothing else.</div>
+
+<h2>IQueryable vs IEnumerable</h2>
+<p>This is the most expensive beginner mistake. Once a query becomes an <code>IEnumerable&lt;T&gt;</code>, every later operator runs <b>in memory</b>, on all the rows already fetched.</p>
+
+<div class="compare">
+  <div class="bad"><span class="tag">❌ Filters in memory</span>
+
+```csharp
+IEnumerable<Order> GetOrders() => db.Orders;
+
+var big = GetOrders()
+    .Where(o => o.Total > 1000)   // LINQ-to-Objects!
+    .ToList();
+// SQL: SELECT * FROM Orders  (all rows!)
+```
+  </div>
+  <div class="good"><span class="tag">✅ Filters in SQL</span>
+
+```csharp
+IQueryable<Order> GetOrders() => db.Orders;
+
+var big = await GetOrders()
+    .Where(o => o.Total > 1000)
+    .ToListAsync();
+// SQL: ... WHERE [o].[Total] > 1000.0
+```
+  </div>
+</div>
+<p>The same thing happens with <code>AsEnumerable()</code>, with a <code>ToList()</code> too early in the chain, and with repository methods that return <code>IEnumerable&lt;T&gt;</code> or <code>List&lt;T&gt;</code> when callers still need to filter.</p>
+
+<h2>Client evaluation</h2>
+<p>EF Core 3.0 and later throw an exception if a <code>Where</code> or <code>OrderBy</code> contains something that can't be translated to SQL. That's good: it stops accidental full-table downloads.</p>
+
+```csharp
+// Throws InvalidOperationException: "The LINQ expression ... could not be translated"
+var vip = db.Customers.Where(c => IsVip(c)).ToList();
+
+static bool IsVip(Customer c) => c.Email.EndsWith("@bigcorp.com");
+```
+<p>Fix it by writing the logic as a translatable expression:</p>
+
+```csharp
+var vip = await db.Customers.Where(c => c.Email.EndsWith("@bigcorp.com")).ToListAsync();
+```
+<p>There is one exception: client evaluation is <b>allowed in the final <code>Select</code></b>, because it only runs on rows already fetched:</p>
+
+```csharp
+var dtos = await db.Customers
+    .Select(c => new { c.Id, Display = FormatName(c.Name) })   // FormatName runs in .NET: OK
+    .ToListAsync();
+```
+<div class="callout info"><span class="title">Explicit client evaluation</span>
+If you really must evaluate something in memory, make it obvious: filter as much as possible in SQL, then call <code>AsEnumerable()</code> or <code>ToListAsync()</code>, then apply the client-side logic.</div>
+
+<h2>Picking the right operator</h2>
+<table>
+  <tr><th>You want…</th><th>Use</th><th>Avoid</th></tr>
+  <tr><td>Does any row exist?</td><td><code>AnyAsync(predicate)</code> → <code>EXISTS</code></td><td><code>CountAsync() &gt; 0</code>, or <code>ToList().Any()</code></td></tr>
+  <tr><td>Exactly one row by unique key</td><td><code>SingleOrDefaultAsync</code> (fetches TOP 2 to verify) or <code>FirstOrDefaultAsync</code> (TOP 1)</td><td><code>Where(...).ToList().FirstOrDefault()</code></td></tr>
+  <tr><td>Entity by primary key</td><td><code>FindAsync(id)</code>: checks the change tracker first and may skip the database entirely</td><td>Nothing wrong with <code>FirstOrDefaultAsync</code>, but it always queries</td></tr>
+  <tr><td>Aggregates</td><td><code>SumAsync</code>, <code>MaxAsync</code>, <code>GroupBy(...).Select(g =&gt; new { g.Key, Count = g.Count() })</code></td><td>Loading rows and aggregating in memory</td></tr>
+  <tr><td>Count of children</td><td><code>Select(c =&gt; new { c.Id, OrderCount = c.Orders.Count() })</code></td><td><code>Include(c =&gt; c.Orders)</code> then <code>.Orders.Count</code></td></tr>
+</table>
+
+<h2>Async: scalability, not speed</h2>
+<p>Async queries (<code>ToListAsync</code>, <code>FirstOrDefaultAsync</code>, <code>SaveChangesAsync</code>) don't make a single query faster. They free the thread while waiting on I/O, so a web server can handle more concurrent requests with fewer threads. Use async in web apps and services, and pass the <code>CancellationToken</code> through so abandoned requests stop their queries.</p>
+
+```csharp
+app.MapGet("/customers/{id:int}/orders", async (int id, ShopContext db, CancellationToken ct) =>
+    await db.Orders.Where(o => o.CustomerId == id).ToListAsync(ct));
+```
+
+<div class="callout warn"><span class="title">Known SqlClient caveat</span>
+With <code>Microsoft.Data.SqlClient</code>, reading very large text or binary columns (several MB of <code>nvarchar(max)</code> or <code>varbinary(max)</code>) <i>asynchronously</i> has been much slower than reading them synchronously. If you hit this, project those columns away, or read them separately in sync code.</div>
+
+<h2>Buffering vs streaming</h2>
+<p><code>ToListAsync()</code> <b>buffers</b>: all rows are loaded into memory before you see the first one. To process a large result set row by row with constant memory, <b>stream</b> it:</p>
+
+```csharp
+await foreach (var order in db.Orders.AsNoTracking().Where(o => o.Status == OrderStatus.Paid).AsAsyncEnumerable())
+{
+    await exporter.WriteAsync(order);     // one row in memory at a time
+}
+```
+<p>Streaming keeps the connection open for the whole loop. Keep the loop body fast, and don't run other queries on the same context inside it unless MARS is enabled. Streaming with tracking still accumulates entities in the change tracker, so use <code>AsNoTracking()</code> (next lesson).</p>
+
+<h2>Exercise</h2>
+<div class="exercise">
+  <h4>🛠 Spot the hidden queries</h4>
+  <p>How many SQL queries does this code run, and how much data does it fetch? Rewrite it.</p>
+
+```csharp
+public List<Customer> GetCustomers() => db.Customers.ToList();
+
+var customers = GetCustomers();
+var withEmail = customers.Where(c => c.Email.Contains("@shop.test")).ToList();
+var hasAny = withEmail.Count() > 0;
+var total = db.Orders.ToList().Where(o => o.Status == OrderStatus.Paid).Sum(o => o.Total);
+```
+  <details><summary>Show solution</summary>
+  <p>The original runs 2 queries, but it downloads <b>every</b> customer and <b>every</b> order. Rewritten:</p>
+
+```csharp
+IQueryable<Customer> Customers() => db.Customers;
+
+var hasAny = await Customers().AnyAsync(c => c.Email.Contains("@shop.test"));     // EXISTS(...)
+var total  = await db.Orders.Where(o => o.Status == OrderStatus.Paid)
+                            .SumAsync(o => o.Total);                              // SELECT SUM(...)
+```
+  <p>Two queries that each return one value, instead of two full table scans pulled into memory.</p>
+  </details>
+</div>
+
+<h2>Quiz</h2>
+
+:::quiz b
+A method returns `IEnumerable<Order>` from `db.Orders`. The caller adds `.Where(o => o.Total > 100)`. Where does the filter run?
+a) In SQL
+b) In memory, after all orders are fetched
+c) EF throws an exception
+d) It depends on the provider
+> `IEnumerable` switches to LINQ-to-Objects, so every row is fetched first.
+:::
+
+:::quiz c
+Where is client-side evaluation allowed in EF Core 3+?
+a) In `Where`
+b) In `OrderBy`
+c) In the top-level (final) `Select` projection
+d) Nowhere
+> Only the final projection can run arbitrary .NET code. Untranslatable filters throw.
+:::
+
+:::quiz d
+What's the main benefit of `ToListAsync()` over `ToList()` in a web API?
+a) The query runs faster in SQL Server
+b) Less data is transferred
+c) Results are cached
+d) Threads are released while waiting on I/O, improving scalability
+> Async improves throughput under concurrency, not single-query latency.
+:::
+
+<h2>Further reading</h2>
+<ul>
+  <li><a href="https://learn.microsoft.com/ef/core/querying/client-eval" target="_blank" rel="noopener">Client vs server evaluation</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/performance/efficient-querying" target="_blank" rel="noopener">Efficient querying</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/miscellaneous/async" target="_blank" rel="noopener">Asynchronous programming</a></li>
+</ul>

@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compiled Models, Startup &amp;amp; Native AOT · EF Core Optimization Course</title>
+<meta name="description" content="Compiled Models, Startup &amp;amp; Native AOT: a lesson from the EF Core Optimization Course.">
+<link rel="stylesheet" href="../assets/css/course.css">
+</head>
+<body data-lesson="17" data-root="../">
+<div class="layout">
+<nav id="sidebar" aria-label="Lessons"></nav>
+<main class="content">
+<article>
+<h1>Compiled Models, Startup &amp; Native AOT</h1>
+<p class="lead">The first request after a deploy is often the slowest. EF Core has to build its model and compile its first queries. For large models this takes seconds. This lesson covers compiled models, warm-up strategies, and EF's path toward Native AOT.</p>
+<div class="meta"><span class="badge">⏱ 30 min</span></div>
+
+<div class="objectives">
+  <h4>By the end of this lesson you will be able to</h4>
+  <ul>
+    <li>Measure where startup time goes.</li>
+    <li>Generate and use a compiled model with <code>dotnet ef dbcontext optimize</code>.</li>
+    <li>Automate compiled model generation in the build (EF 9+).</li>
+    <li>Warm up EF at startup, and understand precompiled queries and Native AOT support.</li>
+  </ul>
+</div>
+
+<h2>What happens on the first query</h2>
+<ol>
+  <li><b>Model building</b>: EF scans your entity types, runs every convention, applies <code>OnModelCreating</code> and validates the result. This happens once per context type per process.</li>
+  <li><b>Service provider creation</b>: EF builds its internal DI container. It's cached, but costs time on first use.</li>
+  <li><b>Query compilation</b> for each distinct query, as covered in Lesson 16.</li>
+  <li><b>First connection</b>: the pool is empty, so TLS and login handshakes happen.</li>
+</ol>
+<p>For a model with 20 entities this takes a few hundred milliseconds. With 500+ entities, model building alone can take several seconds. That hurts serverless cold starts, autoscaling, and every developer's F5.</p>
+
+<pre><code class="language-csharp">var sw = Stopwatch.StartNew();
+await using (var db = new ShopContext(options))
+{
+    _ = db.Model;                                        // forces model building
+    Console.WriteLine($&quot;Model built: {sw.ElapsedMilliseconds} ms&quot;);
+    await db.Customers.AnyAsync();
+    Console.WriteLine($&quot;First query: {sw.ElapsedMilliseconds} ms&quot;);
+}</code></pre>
+
+<h2>Compiled models</h2>
+<p>A compiled model is <b>generated C# source</b> that constructs the finished model directly, skipping conventions and model building at runtime.</p>
+
+<pre><code class="language-bash">dotnet ef dbcontext optimize --output-dir CompiledModels --namespace Shop.Data.CompiledModels</code></pre>
+<p>This generates classes such as <code>ShopContextModel</code>. Wire it up:</p>
+
+<pre><code class="language-csharp">options.UseSqlServer(connStr)
+       .UseModel(Shop.Data.CompiledModels.ShopContextModel.Instance);</code></pre>
+
+<div class="callout new"><span class="title">EF Core 9+: less ceremony</span>
+<ul>
+<li><b>Auto-discovery</b>: if the compiled model is in the same assembly as the context, EF finds and uses it without <code>UseModel</code>.</li>
+<li><b>MSBuild integration</b>: add the <code>Microsoft.EntityFrameworkCore.Tasks</code> package and set <code>&lt;EFOptimizeContext&gt;true&lt;/EFOptimizeContext&gt;</code> in the project file. The compiled model is then regenerated on build, by default for Release builds, so it can't go stale.</li>
+</ul></div>
+
+<pre data-label="Shop.Data.csproj"><code class="language-xml">&lt;PropertyGroup&gt;
+  &lt;EFOptimizeContext&gt;true&lt;/EFOptimizeContext&gt;
+&lt;/PropertyGroup&gt;
+&lt;ItemGroup&gt;
+  &lt;PackageReference Include=&quot;Microsoft.EntityFrameworkCore.Tasks&quot; Version=&quot;10.0.*&quot; PrivateAssets=&quot;all&quot; /&gt;
+&lt;/ItemGroup&gt;</code></pre>
+
+<div class="callout warn"><span class="title">Trade-offs</span>
+<ul>
+<li>If you generate it manually, you <b>must regenerate after every model change</b>, or the runtime model won't match your code. Automate it in the build or CI.</li>
+<li>The generated code is large for big models, so compile time increases.</li>
+<li>A few features have restrictions with compiled models. Check the current docs for your version.</li>
+<li>For small models the gain is small. Measure first.</li>
+</ul></div>
+
+<h2>Warm-up</h2>
+<p>Even with a compiled model, the first execution of each query compiles it. Move that cost out of user requests by warming up during startup, before the instance receives traffic:</p>
+
+<pre><code class="language-csharp">var app = builder.Build();
+
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService&lt;ShopContext&gt;();
+    _ = db.Model;                                   // model (or compiled model) loaded
+    await db.Database.CanConnectAsync();            // first physical connection, pool primed
+
+    // Optionally execute your hottest queries once to fill the query cache
+    _ = await db.Products.AsNoTracking().Where(p =&gt; p.Id == 0).Select(p =&gt; p.Id).ToListAsync();
+}
+
+app.Run();</code></pre>
+<p>Combine this with a readiness probe in Kubernetes or Azure App Service health checks, so the load balancer only routes traffic after warm-up finishes.</p>
+
+<h2>Precompiled queries and Native AOT</h2>
+<p>Native AOT compiles your app to native code with no JIT, giving fast startup and a small memory footprint. Classic EF can't work this way, because LINQ query translation relies on runtime code generation. Starting with EF 9, EF can <b>precompile queries</b> at publish time: it finds your LINQ queries, translates them ahead of time, and uses C# interceptors to replace them with the precompiled versions.</p>
+
+<pre><code class="language-bash">dotnet ef dbcontext optimize --precompile-queries --nativeaot</code></pre>
+
+<div class="callout warn"><span class="title">Status: experimental</span>
+Precompiled queries and Native AOT support were introduced as <b>experimental</b> in EF 9. Only statically analyzable queries can be precompiled, so dynamic composition across methods may not be supported. Check the release notes for your EF version before relying on this in production. For most server apps, compiled models plus warm-up give most of the startup benefit with no restrictions.</div>
+
+<h2>Startup checklist</h2>
+<ul>
+  <li>Measure: time to model built, time to first query, time to first request.</li>
+  <li>Large model (100+ entity types)? Use a compiled model, generated in the build.</li>
+  <li>Warm up the connection and hot queries before taking traffic.</li>
+  <li>Don't run <code>Database.Migrate()</code> at startup in production (Lesson 9). It adds latency and risk.</li>
+  <li>Serverless or scale-to-zero? Consider ReadyToRun or Native AOT for the whole app, and evaluate precompiled queries.</li>
+</ul>
+
+<h2>Exercise</h2>
+<div class="exercise">
+  <h4>🛠 Shave the cold start</h4>
+  <ol>
+    <li>Generate 300 dummy entity types with a script, add them to a test context, and measure model build time.</li>
+    <li>Run <code>dotnet ef dbcontext optimize</code>, plug in the compiled model, and measure again.</li>
+    <li>Add the warm-up block to the API and compare time-to-first-response after a restart, with and without it.</li>
+  </ol>
+  <details><summary>What to expect</summary>
+  <p>With hundreds of entity types, model building drops from seconds to tens of milliseconds with a compiled model. The exact numbers depend on your hardware and model complexity.</p>
+  </details>
+</div>
+
+<h2>Quiz</h2>
+
+<div class="quiz" data-answer="a">
+<p class="q">What does a compiled model eliminate at runtime?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. Running conventions and building the model</button>
+<button class="opt" type="button" data-opt="b">B. Query compilation</button>
+<button class="opt" type="button" data-opt="c">C. Opening database connections</button>
+<button class="opt" type="button" data-opt="d">D. Change tracking</button>
+</div>
+<p class="explain">It replaces model building with generated code. Queries still compile on first use, unless they're precompiled.</p>
+</div>
+
+<div class="quiz" data-answer="c">
+<p class="q">What's the main risk of a manually generated compiled model?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. It disables migrations</button>
+<button class="opt" type="button" data-opt="b">B. It slows queries</button>
+<button class="opt" type="button" data-opt="c">C. It goes stale if you forget to regenerate it after model changes</button>
+<button class="opt" type="button" data-opt="d">D. It can't be used with SQL Server</button>
+</div>
+<p class="explain">Automate generation, for example with EFOptimizeContext in EF 9+, to avoid drift.</p>
+</div>
+
+<div class="quiz" data-answer="b">
+<p class="q">Why can't classic EF Core queries run under Native AOT?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. SQL Server drivers don't support AOT</button>
+<button class="opt" type="button" data-opt="b">B. LINQ translation relies on runtime code generation and dynamic compilation</button>
+<button class="opt" type="button" data-opt="c">C. DbContext uses reflection-only properties</button>
+<button class="opt" type="button" data-opt="d">D. Async isn't supported in AOT</button>
+</div>
+<p class="explain">Precompiled queries (experimental since EF 9) translate queries at publish time to work around this.</p>
+</div>
+
+<h2>Further reading</h2>
+<ul>
+  <li><a href="https://learn.microsoft.com/ef/core/performance/advanced-performance-topics#compiled-models" target="_blank" rel="noopener">Compiled models</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/performance/nativeaot-and-precompiled-queries" target="_blank" rel="noopener">Native AOT and precompiled queries</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/what-is-new/ef-core-9.0/whatsnew" target="_blank" rel="noopener">What's new in EF Core 9</a></li>
+</ul>
+</article>
+<nav id="pager" aria-label="Lesson navigation"></nav>
+</main>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="../assets/js/course.js"></script>
+</body>
+</html>

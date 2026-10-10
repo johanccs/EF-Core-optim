@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EF Core Optimization Course</title>
+<meta name="description" content="A free, hands-on course on configuring and optimizing Entity Framework Core, from beginner to expert.">
+<link rel="stylesheet" href="assets/css/course.css">
+</head>
+<body data-root="">
+<div class="layout">
+<nav id="sidebar" aria-label="Lessons"></nav>
+<main class="content">
+  <section class="hero">
+    <span class="badge">EF Core 10 (LTS) · .NET 10 · applies to EF Core 8+</span>
+    <h1>Master EF Core configuration &amp; performance</h1>
+    <p class="lead">A 20-lesson course that takes you from "how does EF Core work?" to tuning query caches, compiled models and bulk writes in production. Every lesson includes worked examples, the SQL EF generates, a hands-on exercise and a quiz.</p>
+    <div class="cta">
+      <a class="btn" id="resume-btn" href="lessons/01-how-ef-core-works.html">Start Lesson 1 →</a>
+      <a class="btn secondary" href="lessons/20-benchmarking-and-checklist.html#the-ef-core-performance-checklist">Jump to the checklist</a>
+    </div>
+  </section>
+
+  <div class="home">
+    <div class="features">
+      <div><b>📈 Easy → Expert</b>Four levels, each building on the last. Start wherever your knowledge ends.</div>
+      <div><b>🔍 See the SQL</b>Every technique shows the generated SQL, so you learn why it's faster.</div>
+      <div><b>🛠 Hands-on</b>One sample shop domain across all lessons, with exercises and solutions.</div>
+      <div><b>✅ Track progress</b>Mark lessons complete. Progress is saved in your browser.</div>
+    </div>
+
+    <div class="callout info">
+      <span class="title">Prerequisites</span>
+      C# and basic SQL (SELECT, JOIN, WHERE). Install the <a href="https://dotnet.microsoft.com/download" target="_blank" rel="noopener">.NET 10 SDK</a> and a database: SQL Server Developer/Express, LocalDB, Docker (<code>mcr.microsoft.com/mssql/server</code>), or PostgreSQL. Lesson 1 sets up the playground project.
+    </div>
+
+    <div id="curriculum"></div>
+
+    <div class="callout tip">
+      <span class="title">How to get the most out of this course</span>
+      <ol style="margin:0;padding-left:20px">
+        <li>Keep SQL logging on (Lesson 2) for the whole course. Seeing the SQL is the real lesson.</li>
+        <li>Do the exercises against a database with realistic volumes (100k+ rows), not 10 rows.</li>
+        <li>Measure before and after every optimization. Lesson 20 shows how to do it properly.</li>
+      </ol>
+    </div>
+
+    <p style="color:var(--muted);font-size:14px;margin-top:30px">
+      Content is based on the official <a href="https://learn.microsoft.com/ef/core/performance/" target="_blank" rel="noopener">EF Core performance documentation</a>, the EF Core 7–10 release notes, and established community practice. APIs evolve, so check each release's <a href="https://learn.microsoft.com/ef/core/what-is-new/" target="_blank" rel="noopener">What's new</a> page.
+      <button class="icon-btn" id="reset-btn" style="margin-left:8px">Reset progress</button>
+    </p>
+  </div>
+</main>
+</div>
+<script src="assets/js/course.js"></script>
+</body>
+</html>

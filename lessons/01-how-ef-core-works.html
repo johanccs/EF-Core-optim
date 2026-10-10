@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How EF Core Works (and What Costs Time) · EF Core Optimization Course</title>
+<meta name="description" content="How EF Core Works (and What Costs Time): a lesson from the EF Core Optimization Course.">
+<link rel="stylesheet" href="../assets/css/course.css">
+</head>
+<body data-lesson="1" data-root="../">
+<div class="layout">
+<nav id="sidebar" aria-label="Lessons"></nav>
+<main class="content">
+<article>
+<h1>How EF Core Works (and What Costs Time)</h1>
+<p class="lead">You can't optimize what you don't understand. This lesson walks through what EF Core does between your LINQ query and the database, and shows where the time goes.</p>
+<div class="meta"><span class="badge">⏱ 20 min</span></div>
+
+<div class="objectives">
+  <h4>By the end of this lesson you will be able to</h4>
+  <ul>
+    <li>Explain the roles of <code>DbContext</code>, <code>DbSet&lt;T&gt;</code>, the model and the change tracker.</li>
+    <li>Describe the query pipeline: LINQ → expression tree → SQL → materialization.</li>
+    <li>Name the five main cost centres of EF Core performance.</li>
+    <li>Set up the sample <code>ShopContext</code> used throughout this course.</li>
+  </ul>
+</div>
+
+<h2>What EF Core is</h2>
+<p>Entity Framework Core (EF Core) is Microsoft's open-source <b>object-relational mapper (ORM)</b> for .NET. You work with ordinary C# classes (entities), and EF Core translates your LINQ queries into SQL. It also tracks changes to your objects and writes them back to the database. It supports SQL Server, PostgreSQL (Npgsql), SQLite, MySQL, Oracle, Azure Cosmos DB and more through <b>database providers</b>.</p>
+<p>This course targets <b>EF Core 10</b>, the Long-Term Support release that shipped with .NET 10 in November 2025. Nearly everything also applies to EF Core 8 and 9. Where a feature is version-specific, the lesson says so.</p>
+
+<h2>The sample model used in this course</h2>
+<p>Every lesson uses the same small online-shop domain, so you can focus on the techniques instead of learning a new model each time.</p>
+
+<pre data-label="Models.cs"><code class="language-csharp">public class Customer
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = &quot;&quot;;
+    public string Email { get; set; } = &quot;&quot;;
+    public DateTime CreatedUtc { get; set; }
+    public List&lt;Order&gt; Orders { get; set; } = new();
+}
+
+public class Order
+{
+    public int Id { get; set; }
+    public int CustomerId { get; set; }
+    public Customer Customer { get; set; } = null!;
+    public DateTime PlacedUtc { get; set; }
+    public OrderStatus Status { get; set; }
+    public decimal Total { get; set; }
+    public List&lt;OrderLine&gt; Lines { get; set; } = new();
+}
+
+public class OrderLine
+{
+    public int Id { get; set; }
+    public int OrderId { get; set; }
+    public int ProductId { get; set; }
+    public Product Product { get; set; } = null!;
+    public int Quantity { get; set; }
+    public decimal UnitPrice { get; set; }
+}
+
+public class Product
+{
+    public int Id { get; set; }
+    public string Sku { get; set; } = &quot;&quot;;
+    public string Name { get; set; } = &quot;&quot;;
+    public string Description { get; set; } = &quot;&quot;;   // potentially large
+    public decimal Price { get; set; }
+    public int CategoryId { get; set; }
+    public Category Category { get; set; } = null!;
+}
+
+public class Category
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = &quot;&quot;;
+    public List&lt;Product&gt; Products { get; set; } = new();
+}
+
+public enum OrderStatus { Pending, Paid, Shipped, Cancelled }</code></pre>
+
+<pre data-label="ShopContext.cs"><code class="language-csharp">public class ShopContext : DbContext
+{
+    public ShopContext(DbContextOptions&lt;ShopContext&gt; options) : base(options) { }
+
+    public DbSet&lt;Customer&gt; Customers =&gt; Set&lt;Customer&gt;();
+    public DbSet&lt;Order&gt; Orders =&gt; Set&lt;Order&gt;();
+    public DbSet&lt;OrderLine&gt; OrderLines =&gt; Set&lt;OrderLine&gt;();
+    public DbSet&lt;Product&gt; Products =&gt; Set&lt;Product&gt;();
+    public DbSet&lt;Category&gt; Categories =&gt; Set&lt;Category&gt;();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.ApplyConfigurationsFromAssembly(typeof(ShopContext).Assembly);
+    }
+}</code></pre>
+
+<h2>The key building blocks</h2>
+<table>
+  <tr><th>Piece</th><th>What it does</th><th>Performance relevance</th></tr>
+  <tr><td><b>Model</b> (<code>IModel</code>)</td><td>EF's metadata about entities, keys, relationships and column mappings. Built once per context type, then cached.</td><td>Building the model is expensive with hundreds of entities. That's a startup cost (Lesson 17).</td></tr>
+  <tr><td><b>DbContext</b></td><td>A unit of work: holds a connection, a change tracker and services. Meant to be <b>short-lived</b>.</td><td>Creating one is cheap but not free. Pooling helps at high throughput (Lesson 15).</td></tr>
+  <tr><td><b>DbSet&lt;T&gt;</b></td><td>The entry point for querying and adding entities of type <code>T</code>.</td><td>It's an <code>IQueryable&lt;T&gt;</code>, so nothing runs until you enumerate it.</td></tr>
+  <tr><td><b>Change tracker</b></td><td>Remembers every entity a context loaded or attached, plus a snapshot of its original values.</td><td>Costs memory and CPU on every query and every <code>SaveChanges</code> (Lesson 5).</td></tr>
+  <tr><td><b>Query pipeline</b></td><td>Turns a LINQ expression tree into SQL and turns rows back into objects.</td><td>Query compilation is cached. Cache misses are costly (Lesson 16).</td></tr>
+</table>
+
+<h2>The life of a query</h2>
+<p>When you write:</p>
+
+<pre><code class="language-csharp">var orders = await db.Orders
+    .Where(o =&gt; o.CustomerId == customerId &amp;&amp; o.Status == OrderStatus.Paid)
+    .OrderByDescending(o =&gt; o.PlacedUtc)
+    .ToListAsync();</code></pre>
+
+<p>EF Core runs these steps:</p>
+<ol>
+  <li><b>Expression tree.</b> The C# compiler turns your lambdas into an <i>expression tree</i>: data that describes the code rather than compiled IL.</li>
+  <li><b>Cache lookup.</b> EF checks its query cache for a query with the same <i>shape</i>. Captured variables such as <code>customerId</code> become parameters, so the same query with a different id is a cache hit.</li>
+  <li><b>Compilation (on a miss).</b> EF translates the tree into SQL plus a <i>shaper</i>, the code that turns rows into objects. This is the most expensive in-process step.</li>
+  <li><b>Execution.</b> EF opens a connection (from ADO.NET's connection pool), sends the SQL with parameters and waits for the database. This network round trip plus the database's own work usually dominates total time.</li>
+  <li><b>Materialization.</b> EF reads each row and creates entity instances.</li>
+  <li><b>Tracking.</b> For tracking queries, EF registers each entity in the change tracker, applies identity resolution and fixes up navigation properties.</li>
+</ol>
+
+<pre data-label="Generated SQL (SQL Server)"><code class="language-sql">SELECT [o].[Id], [o].[CustomerId], [o].[PlacedUtc], [o].[Status], [o].[Total]
+FROM [Orders] AS [o]
+WHERE [o].[CustomerId] = @__customerId_0 AND [o].[Status] = 1
+ORDER BY [o].[PlacedUtc] DESC</code></pre>
+
+<div class="callout tip"><span class="title">Rule of thumb</span>
+In most applications the database dominates: round trips, rows scanned, rows transferred. Fix data access patterns first (what you fetch and how many queries you send). Micro-optimize EF itself last.</div>
+
+<h2>The five cost centres</h2>
+<p>Almost every EF Core performance problem falls into one of these buckets. The rest of the course is organized around them.</p>
+<table>
+  <tr><th>#</th><th>Cost centre</th><th>Typical symptom</th><th>Lessons</th></tr>
+  <tr><td>1</td><td><b>Too many round trips</b></td><td>N+1 queries, saving in a loop, lazy loading in loops</td><td>7, 11</td></tr>
+  <tr><td>2</td><td><b>Too much data</b></td><td>Fetching all columns or rows, client-side filtering, cartesian explosion</td><td>4, 6, 8, 10</td></tr>
+  <tr><td>3</td><td><b>Inefficient SQL / missing indexes</b></td><td>Table scans, bad plans, offset paging on big tables</td><td>8, 9, 13, 14</td></tr>
+  <tr><td>4</td><td><b>EF in-process overhead</b></td><td>Tracking you don't need, query cache misses, context allocation</td><td>5, 15, 16</td></tr>
+  <tr><td>5</td><td><b>Startup cost</b></td><td>Slow first request, large models</td><td>17</td></tr>
+</table>
+
+<h2>The unit-of-work pattern</h2>
+<p>A <code>DbContext</code> is a unit of work. You load some entities, change them in memory, then call <code>SaveChanges()</code>. EF compares current values with the snapshot it took when loading, then emits the minimum <code>INSERT</code>, <code>UPDATE</code> and <code>DELETE</code> statements, batched together and wrapped in a transaction.</p>
+
+<pre><code class="language-csharp">await using var db = new ShopContext(options);
+
+var product = await db.Products.SingleAsync(p =&gt; p.Sku == &quot;BOOK-42&quot;);
+product.Price = 19.99m;                 // only changes memory
+
+await db.SaveChangesAsync();            // UPDATE [Products] SET [Price] = @p0 WHERE [Id] = @p1</code></pre>
+
+<div class="callout warn"><span class="title">A DbContext is not thread-safe</span>
+Never share one context across threads or run two operations on it in parallel (for example, <code>Task.WhenAll</code> over two queries on the same context). EF throws <code>InvalidOperationException: A second operation was started on this context instance…</code>. Use one context per unit of work, which in ASP.NET Core means one per request.</div>
+
+<h2>Exercise</h2>
+<div class="exercise">
+  <h4>🛠 Build the playground</h4>
+  <ol>
+    <li>Create a console app: <code>dotnet new console -n EfPlayground</code>.</li>
+    <li>Add packages: <code>dotnet add package Microsoft.EntityFrameworkCore.SqlServer</code> (or <code>.Sqlite</code>) and <code>dotnet add package Microsoft.EntityFrameworkCore.Design</code>.</li>
+    <li>Paste the model and <code>ShopContext</code> above.</li>
+    <li>Install the CLI tool: <code>dotnet tool install --global dotnet-ef</code>.</li>
+    <li>Create the database: <code>dotnet ef migrations add Initial</code>, then <code>dotnet ef database update</code>.</li>
+    <li>Write a seeding loop that inserts 1,000 customers with 10 orders each. You'll reuse this data in later lessons.</li>
+  </ol>
+  <details><summary>Show a seeding snippet</summary>
+
+<pre><code class="language-csharp">var rnd = new Random(42);
+var category = new Category { Name = &quot;Books&quot; };
+var products = Enumerable.Range(1, 200).Select(i =&gt; new Product
+{
+    Sku = $&quot;SKU-{i:D5}&quot;, Name = $&quot;Product {i}&quot;, Description = new string(&#x27;x&#x27;, 2000),
+    Price = rnd.Next(5, 200), Category = category
+}).ToList();
+db.Products.AddRange(products);
+
+for (int c = 0; c &lt; 1000; c++)
+{
+    var customer = new Customer { Name = $&quot;Customer {c}&quot;, Email = $&quot;c{c}@shop.test&quot;, CreatedUtc = DateTime.UtcNow };
+    for (int o = 0; o &lt; 10; o++)
+    {
+        var order = new Order { PlacedUtc = DateTime.UtcNow.AddDays(-rnd.Next(365)), Status = (OrderStatus)rnd.Next(4) };
+        for (int l = 0; l &lt; 3; l++)
+        {
+            var p = products[rnd.Next(products.Count)];
+            order.Lines.Add(new OrderLine { Product = p, Quantity = rnd.Next(1, 5), UnitPrice = p.Price });
+        }
+        order.Total = order.Lines.Sum(x =&gt; x.Quantity * x.UnitPrice);
+        customer.Orders.Add(order);
+    }
+    db.Customers.Add(customer);
+}
+await db.SaveChangesAsync();   // EF batches these inserts. Lesson 11 explains how.</code></pre>
+  </details>
+</div>
+
+<h2>Quiz</h2>
+
+<div class="quiz" data-answer="c">
+<p class="q">When does EF Core send SQL to the database for <code>db.Orders.Where(o =&gt; o.Total &gt; 100)</code>?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. As soon as <code>Where</code> is called</button>
+<button class="opt" type="button" data-opt="b">B. When the DbContext is created</button>
+<button class="opt" type="button" data-opt="c">C. When the query is enumerated, e.g. with <code>ToListAsync()</code> or <code>foreach</code></button>
+<button class="opt" type="button" data-opt="d">D. When <code>SaveChanges()</code> is called</button>
+</div>
+<p class="explain">LINQ queries against a DbSet are deferred. They only build an expression tree until you enumerate them.</p>
+</div>
+
+<div class="quiz" data-answer="b">
+<p class="q">Which of these is usually the largest cost in a slow EF Core endpoint?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. Creating the DbContext instance</button>
+<button class="opt" type="button" data-opt="b">B. Database round trips and the amount of data scanned or transferred</button>
+<button class="opt" type="button" data-opt="c">C. Expression tree allocation</button>
+<button class="opt" type="button" data-opt="d">D. Reflection on entity properties</button>
+</div>
+<p class="explain">Network latency and database work usually dwarf in-process overhead. Fix query count and data volume first.</p>
+</div>
+
+<div class="quiz" data-answer="a">
+<p class="q">Why is changing <code>customerId</code> between calls still a query-cache hit?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. Captured variables are sent as SQL parameters, so the query shape is unchanged</button>
+<button class="opt" type="button" data-opt="b">B. EF caches results, not queries</button>
+<button class="opt" type="button" data-opt="c">C. SQL Server caches the result set</button>
+<button class="opt" type="button" data-opt="d">D. It isn't a cache hit. Each value compiles a new query.</button>
+</div>
+<p class="explain">Closure variables become parameters (<code>@__customerId_0</code>). Lesson 16 shows how constants can break this.</p>
+</div>
+
+<h2>Further reading</h2>
+<ul>
+  <li><a href="https://learn.microsoft.com/ef/core/performance/" target="_blank" rel="noopener">Microsoft Learn: EF Core performance overview</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/querying/how-query-works" target="_blank" rel="noopener">How queries work</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/what-is-new/ef-core-10.0/whatsnew" target="_blank" rel="noopener">What's new in EF Core 10</a></li>
+</ul>
+</article>
+<nav id="pager" aria-label="Lesson navigation"></nav>
+</main>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="../assets/js/course.js"></script>
+</body>
+</html>

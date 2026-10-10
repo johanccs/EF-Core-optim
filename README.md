@@ -53,18 +53,13 @@ What the assistant does for accuracy:
 
 ## Publishing with GitHub Pages
 
-The live site is served from the **`gh-pages` branch**, which contains only the built site: `index.html`, `404.html`, `.nojekyll`, `lessons/` and `assets/`. To publish an update:
+The site is served straight from the **`main` branch**, so every push to `main` publishes automatically. No workflow or separate publish step is needed, because the generated pages in `lessons/` are committed alongside their sources. Before you push:
 
 ```bash
-python3 build.py
-git worktree add ../site gh-pages            # first time only
-cp -r index.html 404.html .nojekyll lessons assets ../site/
-cd ../site && git add -A && git commit -m "Publish site" && git push
+python3 build.py      # regenerate lessons/ and the search index, then commit them
 ```
 
-If GitHub ever stops serving it, check **Settings → Pages → Source: Deploy from a branch → `gh-pages` / root**.
-
-**Alternative (automated):** `.github/workflows/pages.yml` builds and deploys on every push to `main`. To use it, merge the course into `main` and set **Settings → Pages → Source: GitHub Actions**. That replaces the `gh-pages` deployment.
+CI fails if you forget. Pages setting: **Settings → Pages → Source: Deploy from a branch → `main` / (root)**.
 
 ## Development
 
@@ -80,7 +75,7 @@ assets/js/search-index.js  generated full-text search index
 assets/js/theme-init.js  applies the saved theme before first paint
 build.py                 builds src/lessons → lessons + search index
 tests/run-tests.mjs      end-to-end, accessibility and AI tutor tests
-.github/workflows/       CI (ci.yml) and Pages deployment (pages.yml)
+.github/workflows/       CI (ci.yml)
 ```
 
 ### Editing a lesson

@@ -316,8 +316,12 @@
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); ask(ui.input.value); }
     });
     wrap.addEventListener("keydown", function (e) {
-      if (e.key === "Escape") { e.preventDefault(); closeModal(); }
       if (e.key === "Tab") trapFocus(e);
+    });
+
+    // Escape closes the modal wherever focus is (it may be on <body> after clicking plain text in the modal)
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && !ui.backdrop.hidden) { e.preventDefault(); closeModal(); }
     });
 
     fab.addEventListener("mousedown", function (e) { e.preventDefault(); });   // keep the selection

@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src https:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interceptors, Query Filters &amp; Conventions · EF Core Optimization Course</title>
+<meta name="description" content="Cross-cutting concerns such as soft delete, multi-tenancy, auditing, query hints and monitoring belong in one place, not copied into every query. This lesson covers EF&#x27;s extension points and how to use them without adding overhead.">
+<meta property="og:title" content="Interceptors, Query Filters &amp; Conventions">
+<meta property="og:description" content="Cross-cutting concerns such as soft delete, multi-tenancy, auditing, query hints and monitoring belong in one place, not copied into every query. This lesson covers EF&#x27;s extension points and how to use them without adding overhead.">
+<meta property="og:type" content="article">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/course.css">
+<script src="../assets/js/theme-init.js"></script>
+</head>
+<body data-lesson="24" data-root="../">
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="layout">
+<nav id="sidebar" aria-label="Lessons"></nav>
+<main class="content" id="main">
+<noscript><p class="callout warn">Navigation, quizzes and progress tracking need JavaScript. The lesson text below still works without it.</p></noscript>
+<article>
+<h1>Interceptors, Query Filters &amp; Conventions</h1>
+<p class="lead">Cross-cutting concerns such as soft delete, multi-tenancy, auditing, query hints and monitoring belong in one place, not copied into every query. This lesson covers EF's extension points and how to use them without adding overhead.</p>
+<div class="meta"><span class="badge">⏱ 35 min</span></div>
+
+<div class="goal">
+  <span class="title">🎯 Goal of this lesson</span>
+  <p>Learn to implement <b>cross-cutting concerns once</b> (auditing, soft delete, multi-tenancy, query hints, monitoring) using interceptors, query filters and conventions.</p>
+  <p><b>Why it matters:</b> Copy-pasted cross-cutting logic drifts and causes bugs and data leaks. Centralized extension points keep it consistent, but they run on every operation, so they must stay cheap.</p>
+</div>
+
+<div class="objectives">
+  <h2 class="box-title" id="by-the-end-of-this-lesson-you-will-be-able-to">By the end of this lesson you will be able to</h2>
+  <ul>
+    <li>Write command, SaveChanges and materialization interceptors.</li>
+    <li>Use global query filters for soft delete and tenancy, including EF 10 named filters.</li>
+    <li>Index for query filters so they stay fast.</li>
+    <li>Write a custom model-building convention.</li>
+  </ul>
+</div>
+
+<h2 id="interceptors">Interceptors</h2>
+<p>Interceptors let you observe and modify EF operations. The main kinds:</p>
+<table>
+  <thead><tr><th scope="col">Interface / base class</th><th scope="col">Intercepts</th><th scope="col">Typical use</th></tr></thead>
+  <tbody>
+  <tr><td><code>DbCommandInterceptor</code></td><td>Command creation and execution</td><td>Slow-query logging, query hints, command counting</td></tr>
+  <tr><td><code>DbConnectionInterceptor</code></td><td>Opening and closing connections</td><td>Setting session context (e.g. <code>SESSION_CONTEXT</code> for row-level security), access tokens</td></tr>
+  <tr><td><code>DbTransactionInterceptor</code></td><td>Transactions</td><td>Diagnostics</td></tr>
+  <tr><td><code>SaveChangesInterceptor</code></td><td>SaveChanges</td><td>Audit fields, domain events, outbox</td></tr>
+  <tr><td><code>IMaterializationInterceptor</code></td><td>Entity instance creation</td><td>Injecting services, post-load initialization</td></tr>
+  <tr><td><code>IQueryExpressionInterceptor</code></td><td>The LINQ expression tree before compilation</td><td>Rewriting queries, enforcing rules</td></tr>
+  </tbody>
+</table>
+
+<div class="callout warn"><span class="title">Interceptors are on the hot path</span>
+Command interceptors run for <b>every</b> command. Keep them cheap. No I/O, no heavy allocation, no locks. Register stateless interceptors as singletons and add them once with <code>AddInterceptors</code>.</div>
+
+<h3 id="example-audit-fields-with-savechangesinterceptor">Example: audit fields with SaveChangesInterceptor</h3>
+
+<pre><code class="language-csharp">public interface IAuditable { DateTime CreatedUtc { get; set; } DateTime? ModifiedUtc { get; set; } }
+
+public sealed class AuditInterceptor(TimeProvider clock) : SaveChangesInterceptor
+{
+    // Override BOTH: SaveChanges() calls the sync hook, SaveChangesAsync() the async one.
+    public override InterceptionResult&lt;int&gt; SavingChanges(DbContextEventData eventData, InterceptionResult&lt;int&gt; result)
+    {
+        Stamp(eventData.Context);
+        return result;
+    }
+
+    public override ValueTask&lt;InterceptionResult&lt;int&gt;&gt; SavingChangesAsync(
+        DbContextEventData eventData, InterceptionResult&lt;int&gt; result, CancellationToken ct = default)
+    {
+        Stamp(eventData.Context);
+        return ValueTask.FromResult(result);
+    }
+
+    private void Stamp(DbContext? context)
+    {
+        if (context is null) return;
+        var now = clock.GetUtcNow().UtcDateTime;
+        foreach (var e in context.ChangeTracker.Entries&lt;IAuditable&gt;())
+        {
+            if (e.State == EntityState.Added) e.Entity.CreatedUtc = now;
+            if (e.State == EntityState.Modified) e.Entity.ModifiedUtc = now;
+        }
+    }
+}</code></pre>
+
+<h3 id="example-query-hints-by-tag">Example: query hints by tag</h3>
+<p>Combine a query tag (Lesson 19) with a command interceptor to add a hint to specific queries only, for example to fight parameter sniffing:</p>
+
+<pre><code class="language-csharp">public sealed class RecompileHintInterceptor : DbCommandInterceptor
+{
+    public const string Tag = &quot;-- hint:recompile&quot;;
+
+    public override InterceptionResult&lt;DbDataReader&gt; ReaderExecuting(
+        DbCommand command, CommandEventData eventData, InterceptionResult&lt;DbDataReader&gt; result)
+    {
+        AddHint(command);
+        return result;
+    }
+
+    public override ValueTask&lt;InterceptionResult&lt;DbDataReader&gt;&gt; ReaderExecutingAsync(
+        DbCommand command, CommandEventData eventData, InterceptionResult&lt;DbDataReader&gt; result, CancellationToken ct = default)
+    {
+        AddHint(command);
+        return ValueTask.FromResult(result);
+    }
+
+    private static void AddHint(DbCommand command)
+    {
+        // TagWith(&quot;hint:recompile&quot;) makes EF emit &quot;-- hint:recompile&quot; as the first line
+        if (command.CommandText.StartsWith(Tag, StringComparison.Ordinal))
+            command.CommandText += &quot; OPTION (RECOMPILE)&quot;;
+    }
+}
+
+var rows = await db.Orders.TagWith(&quot;hint:recompile&quot;).Where(o =&gt; o.CustomerId == id).ToListAsync();</code></pre>
+
+<h2 id="global-query-filters">Global query filters</h2>
+<p>A query filter is a predicate EF adds automatically to every query on an entity type, including <code>Include</code>s and navigations:</p>
+
+<pre><code class="language-csharp">public class ShopContext(DbContextOptions&lt;ShopContext&gt; options, ITenantProvider tenant) : DbContext(options)
+{
+    private readonly int _tenantId = tenant.CurrentTenantId;
+
+    protected override void OnModelCreating(ModelBuilder b)
+    {
+        b.Entity&lt;Order&gt;().HasQueryFilter(o =&gt; !o.IsDeleted &amp;&amp; o.TenantId == _tenantId);
+    }
+}
+
+// Bypass when needed (admin screens, data fixes):
+var all = await db.Orders.IgnoreQueryFilters().ToListAsync();</code></pre>
+<p>The context field <code>_tenantId</code> is read <b>per query</b> and sent as a parameter, so the query cache still works. With pooling, use the factory pattern from Lesson 20 instead of constructor injection.</p>
+
+<div class="callout new"><span class="title">New in EF Core 10: named query filters</span>
+Before EF 10, an entity type could have only one filter. Calling <code>HasQueryFilter</code> again replaced it, and <code>IgnoreQueryFilters()</code> was all or nothing. EF 10 lets you name filters and disable them selectively:
+
+<pre><code class="language-csharp">b.Entity&lt;Order&gt;()
+ .HasQueryFilter(&quot;SoftDelete&quot;, o =&gt; !o.IsDeleted)
+ .HasQueryFilter(&quot;Tenant&quot;, o =&gt; o.TenantId == _tenantId);
+
+// Show deleted orders, but still only for this tenant
+var bin = await db.Orders.IgnoreQueryFilters([&quot;SoftDelete&quot;]).Where(o =&gt; o.IsDeleted).ToListAsync();</code></pre>
+</div>
+
+<h3 id="indexing-for-filters">Indexing for filters</h3>
+<p>Every query on a filtered entity now includes the filter predicate, so your indexes must account for it:</p>
+<ul>
+  <li><b>Multi-tenancy</b>: put <code>TenantId</code> <b>first</b> in your composite indexes: <code>(TenantId, CustomerId, PlacedUtc)</code>.</li>
+  <li><b>Soft delete</b>: use filtered indexes that only contain live rows: <code>HasIndex(o =&gt; o.PlacedUtc).HasFilter("[IsDeleted] = 0")</code>. They're smaller and match the predicate.</li>
+</ul>
+
+<div class="callout warn"><span class="title">Filters and required navigations</span>
+If <code>Customer</code> is soft-deleted and <code>Order.Customer</code> is a <i>required</i> navigation, an <code>Include(o =&gt; o.Customer)</code> uses an INNER JOIN, and the customer's filter makes those orders disappear from the results. Either filter both sides consistently or make the navigation optional. EF warns about this in the model validation logs.</div>
+
+<h2 id="custom-conventions">Custom conventions</h2>
+<p>Conventions let you encode team rules once. For example, "every entity with a <code>TenantId</code> gets an index on it":</p>
+
+<pre><code class="language-csharp">public sealed class TenantIndexConvention : IModelFinalizingConvention
+{
+    public void ProcessModelFinalizing(IConventionModelBuilder modelBuilder, IConventionContext&lt;IConventionModelBuilder&gt; context)
+    {
+        foreach (var entityType in modelBuilder.Metadata.GetEntityTypes())
+        {
+            if (entityType.BaseType is not null) continue;           // root types only
+            var tenant = entityType.FindProperty(&quot;TenantId&quot;);
+            if (tenant is not null)
+                entityType.Builder.HasIndex(new[] { tenant });
+        }
+    }
+}
+
+protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+{
+    configurationBuilder.Conventions.Add(_ =&gt; new TenantIndexConvention());
+}</code></pre>
+<p>You can also <b>remove</b> conventions you don't want. For example, <code>configurationBuilder.Conventions.Remove(typeof(ForeignKeyIndexConvention));</code> stops automatic FK indexes when you manage all indexes yourself. Do this only deliberately.</p>
+
+<div class="takeaways">
+  <h2 class="box-title" id="key-takeaways">🔑 Key takeaways</h2>
+  <ul>
+    <li>Interceptors centralize cross-cutting logic but run on every operation. Keep them cheap, and override both sync and async hooks.</li>
+    <li>Global query filters implement soft delete and tenancy. EF 10 adds named filters you can disable individually.</li>
+    <li>Index for your filters: tenant column first, filtered indexes for live rows.</li>
+    <li>Custom conventions encode team rules once, model-wide.</li>
+  </ul>
+</div>
+
+<h2 id="exercise">Exercise</h2>
+<div class="exercise">
+  <h3 class="box-title" id="production-grade-cross-cutting-concerns">🛠 Production-grade cross-cutting concerns</h3>
+  <ol>
+    <li>Add <code>IsDeleted</code> and <code>TenantId</code> to <code>Order</code> and <code>Customer</code>, with named filters (EF 10) or a combined filter (EF 8/9).</li>
+    <li>Override delete behaviour: in a <code>SaveChangesInterceptor</code>, turn <code>EntityState.Deleted</code> into a modification that sets <code>IsDeleted = true</code>.</li>
+    <li>Add a <code>CommandCountingInterceptor</code> that counts commands per request (store the counter in an <code>AsyncLocal</code> or a scoped service) and logs a warning above 10. Use it to catch an N+1.</li>
+    <li>Create the matching tenant-first and filtered indexes and check the plans.</li>
+  </ol>
+  <details><summary>Soft-delete interceptor sketch (async hook shown; override the sync <code>SavingChanges</code> too)</summary>
+
+<pre><code class="language-csharp">public override ValueTask&lt;InterceptionResult&lt;int&gt;&gt; SavingChangesAsync(DbContextEventData e, InterceptionResult&lt;int&gt; r, CancellationToken ct = default)
+{
+    foreach (var entry in e.Context!.ChangeTracker.Entries&lt;ISoftDeletable&gt;().Where(x =&gt; x.State == EntityState.Deleted))
+    {
+        entry.State = EntityState.Modified;
+        entry.Entity.IsDeleted = true;
+    }
+    return ValueTask.FromResult(r);
+}</code></pre>
+  </details>
+</div>
+
+<h2 id="quiz">Quiz</h2>
+
+<div class="quiz" data-answer="c">
+<p class="q">Where is the tenant id from a context field evaluated in a global query filter?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. Once, when the model is built</button>
+<button class="opt" type="button" data-opt="b">B. Once per application start</button>
+<button class="opt" type="button" data-opt="c">C. Per query execution, as a SQL parameter</button>
+<button class="opt" type="button" data-opt="d">D. Client-side after the query</button>
+</div>
+<p class="explain">EF parameterizes context members referenced in filters, so each query uses the current context's value.</p>
+</div>
+
+<div class="quiz" data-answer="b">
+<p class="q">What does EF Core 10's named query filters feature enable?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. Filters on keyless types</button>
+<button class="opt" type="button" data-opt="b">B. Several filters per entity, and disabling specific ones with <code>IgnoreQueryFilters([&quot;Name&quot;])</code></button>
+<button class="opt" type="button" data-opt="c">C. Filters that run client-side</button>
+<button class="opt" type="button" data-opt="d">D. Filters in raw SQL</button>
+</div>
+<p class="explain">Before EF 10 there was one filter per entity, and ignoring was all or nothing.</p>
+</div>
+
+<div class="quiz" data-answer="a">
+<p class="q">Which index best supports a multi-tenant query: <code>WHERE TenantId = @t AND CustomerId = @c ORDER BY PlacedUtc DESC</code>?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. <code>(TenantId, CustomerId, PlacedUtc DESC)</code></button>
+<button class="opt" type="button" data-opt="b">B. <code>(PlacedUtc)</code></button>
+<button class="opt" type="button" data-opt="c">C. <code>(CustomerId)</code></button>
+<button class="opt" type="button" data-opt="d">D. <code>(PlacedUtc, TenantId)</code></button>
+</div>
+<p class="explain">Equality columns first (TenantId, CustomerId), then the sort column.</p>
+</div>
+
+<h2 id="further-reading">Further reading</h2>
+<ul>
+  <li><a href="https://learn.microsoft.com/ef/core/logging-events-diagnostics/interceptors" target="_blank" rel="noopener">Interceptors</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/querying/filters" target="_blank" rel="noopener">Global query filters</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/modeling/bulk-configuration#conventions" target="_blank" rel="noopener">Custom conventions</a></li>
+</ul>
+<p class="reviewed">Last reviewed October 2026 against EF Core 10 (LTS). Spotted an error? Select it, right-click, and ask the AI tutor to double-check it, or open an issue in the repository.</p>
+</article>
+<nav id="pager" aria-label="Lesson navigation"></nav>
+</main>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="../assets/js/course.js"></script>
+<script src="../assets/js/ai-assistant.js"></script>
+</body>
+</html>

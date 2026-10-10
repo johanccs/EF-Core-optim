@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src https:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pagination: Offset vs Keyset · EF Core Optimization Course</title>
+<meta name="description" content="Returning unbounded result sets is one of the most common production incidents. This lesson covers how to page correctly, and why the obvious Skip / Take approach slows down as users page deeper.">
+<meta property="og:title" content="Pagination: Offset vs Keyset">
+<meta property="og:description" content="Returning unbounded result sets is one of the most common production incidents. This lesson covers how to page correctly, and why the obvious Skip / Take approach slows down as users page deeper.">
+<meta property="og:type" content="article">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/course.css">
+<script src="../assets/js/theme-init.js"></script>
+</head>
+<body data-lesson="13" data-root="../">
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="layout">
+<nav id="sidebar" aria-label="Lessons"></nav>
+<main class="content" id="main">
+<noscript><p class="callout warn">Navigation, quizzes and progress tracking need JavaScript. The lesson text below still works without it.</p></noscript>
+<article>
+<h1>Pagination: Offset vs Keyset</h1>
+<p class="lead">Returning unbounded result sets is one of the most common production incidents. This lesson covers how to page correctly, and why the obvious <code>Skip</code>/<code>Take</code> approach slows down as users page deeper.</p>
+<div class="meta"><span class="badge">⏱ 25 min</span></div>
+
+<div class="goal">
+  <span class="title">🎯 Goal of this lesson</span>
+  <p>Learn to <b>return large result sets in pages</b> correctly, and understand why keyset paging stays fast where offset paging slows down.</p>
+  <p><b>Why it matters:</b> Unbounded queries cause outages as data grows, and deep offset paging degrades linearly. Correct paging keeps list endpoints fast at any size.</p>
+</div>
+
+<div class="objectives">
+  <h2 class="box-title" id="by-the-end-of-this-lesson-you-will-be-able-to">By the end of this lesson you will be able to</h2>
+  <ul>
+    <li>Always limit result sets, and know why.</li>
+    <li>Implement offset pagination correctly and understand its costs.</li>
+    <li>Implement keyset (seek) pagination, including with composite sort keys.</li>
+    <li>Handle total counts efficiently.</li>
+  </ul>
+</div>
+
+<h2 id="rule-1-never-return-unbounded-results">Rule #1: never return unbounded results</h2>
+<p><code>db.Orders.ToListAsync()</code> is fine with 50 rows in development and an outage with 5 million rows in production. Every list endpoint should have a maximum page size enforced on the server:</p>
+
+<pre><code class="language-csharp">const int MaxPageSize = 100;
+pageSize = Math.Clamp(pageSize, 1, MaxPageSize);</code></pre>
+
+<h2 id="offset-pagination-skip-take">Offset pagination (Skip/Take)</h2>
+
+<pre><code class="language-csharp">var skip = (pageNumber - 1) * pageSize;
+var page = await db.Orders
+    .AsNoTracking()
+    .OrderByDescending(o =&gt; o.PlacedUtc).ThenByDescending(o =&gt; o.Id)   // deterministic order!
+    .Skip(skip)
+    .Take(pageSize)
+    .Select(o =&gt; new { o.Id, o.PlacedUtc, o.Total })
+    .ToListAsync();</code></pre>
+
+<pre data-label="SQL Server"><code class="language-sql">SELECT [o].[Id], [o].[PlacedUtc], [o].[Total]
+FROM [Orders] AS [o]
+ORDER BY [o].[PlacedUtc] DESC, [o].[Id] DESC
+OFFSET @skip ROWS FETCH NEXT @pageSize ROWS ONLY</code></pre>
+
+<div class="callout warn"><span class="title">Always order by a unique key</span>
+Without a total ordering the database may return rows in any order, so rows can repeat or vanish between pages. Add the primary key as a tie-breaker: <code>.ThenBy(o =&gt; o.Id)</code>.</div>
+
+<h3 id="why-offset-gets-slow">Why offset gets slow</h3>
+<p>To return page 5,000 with 20 rows per page, the database must <b>read and discard 99,980 rows</b> first. Cost grows linearly with the offset. Offset paging also suffers from <b>drift</b>: if a row is inserted or deleted while the user pages, items shift and the user sees duplicates or misses rows.</p>
+
+<h2 id="keyset-seek-pagination">Keyset (seek) pagination</h2>
+<p>Instead of "skip N rows", say "give me rows <b>after the last one I saw</b>". With an index on the sort key, the database seeks directly to the position. Page 5,000 costs the same as page 1.</p>
+
+<pre><code class="language-csharp">// First page: lastId = null
+IQueryable&lt;Order&gt; query = db.Orders.AsNoTracking();
+
+if (lastId is not null)
+    query = query.Where(o =&gt; o.Id &gt; lastId);          // seek predicate
+
+var page = await query.OrderBy(o =&gt; o.Id).Take(pageSize).ToListAsync();
+var nextCursor = page.LastOrDefault()?.Id;           // return to client</code></pre>
+
+<pre><code class="language-sql">SELECT TOP(@pageSize) ... FROM [Orders] AS [o]
+WHERE [o].[Id] &gt; @lastId
+ORDER BY [o].[Id]</code></pre>
+
+<h3 id="composite-sort-keys">Composite sort keys</h3>
+<p>Real lists sort by something non-unique, such as date. Use (date, id) as the cursor:</p>
+
+<pre><code class="language-csharp">public record OrderCursor(DateTime PlacedUtc, int Id);
+
+IQueryable&lt;Order&gt; q = db.Orders.AsNoTracking();
+
+if (cursor is not null)
+{
+    q = q.Where(o =&gt; o.PlacedUtc &lt; cursor.PlacedUtc
+                 || (o.PlacedUtc == cursor.PlacedUtc &amp;&amp; o.Id &lt; cursor.Id));
+}
+
+var page = await q
+    .OrderByDescending(o =&gt; o.PlacedUtc).ThenByDescending(o =&gt; o.Id)
+    .Take(pageSize + 1)                      // fetch one extra to know if there&#x27;s a next page
+    .Select(o =&gt; new { o.Id, o.PlacedUtc, o.Total })
+    .ToListAsync();
+
+var hasMore = page.Count &gt; pageSize;
+var items = page.Take(pageSize).ToList();
+var next = hasMore ? new OrderCursor(items[^1].PlacedUtc, items[^1].Id) : null;</code></pre>
+
+<p>Support it with a matching composite index (Lesson 14):</p>
+
+<pre><code class="language-csharp">modelBuilder.Entity&lt;Order&gt;()
+    .HasIndex(o =&gt; new { o.PlacedUtc, o.Id })
+    .IsDescending(true, true);                       // EF Core 7+</code></pre>
+
+<div class="callout info"><span class="title">Encode the cursor</span>
+Return the cursor to clients as an opaque string, for example Base64 of the JSON <code>{"PlacedUtc":"…","Id":123}</code>. Clients can't tamper with its meaning, and you can change the format later.</div>
+
+<h3 id="offset-vs-keyset">Offset vs keyset</h3>
+<table>
+  <thead><tr><th scope="col">Aspect</th><th scope="col">Offset (Skip/Take)</th><th scope="col">Keyset (seek)</th></tr></thead>
+  <tbody>
+  <tr><td>Deep page performance</td><td>Degrades linearly</td><td>Constant (with index)</td></tr>
+  <tr><td>Jump to arbitrary page</td><td>✅ Yes</td><td>❌ Only next/previous</td></tr>
+  <tr><td>Stable under inserts/deletes</td><td>❌ Drift</td><td>✅ Stable</td></tr>
+  <tr><td>Best for</td><td>Admin grids with page numbers, small tables</td><td>Infinite scroll, APIs, exports, large tables</td></tr>
+  </tbody>
+</table>
+
+<h2 id="total-counts">Total counts</h2>
+<p>"Page 3 of 1,284" needs a <code>COUNT(*)</code>, which scans the whole filtered set on every request. Options:</p>
+<ul>
+  <li>Skip it. Show "next" and "previous" only, using the <code>Take(pageSize + 1)</code> trick.</li>
+  <li>Count only on the first page request and cache it.</li>
+  <li>Show an approximate count for huge tables.</li>
+</ul>
+
+<pre><code class="language-csharp">var filtered = db.Orders.Where(o =&gt; o.Status == status);
+var total = await filtered.CountAsync();           // round trip 1
+var items = await filtered.OrderBy(o =&gt; o.Id).Skip(skip).Take(take).ToListAsync();  // round trip 2</code></pre>
+
+<div class="takeaways">
+  <h2 class="box-title" id="key-takeaways">🔑 Key takeaways</h2>
+  <ul>
+    <li>Never return unbounded result sets. Enforce a maximum page size on the server.</li>
+    <li>Offset paging cost grows with page depth and drifts when data changes.</li>
+    <li>Keyset paging stays constant-time with an index and a unique cursor (e.g. date + id).</li>
+    <li><code>COUNT(*)</code> for totals is a full scan of the filtered set. Make it optional or cache it.</li>
+  </ul>
+</div>
+
+<h2 id="exercise">Exercise</h2>
+<div class="exercise">
+  <h3 class="box-title" id="compare-the-two">🛠 Compare the two</h3>
+  <ol>
+    <li>Seed 1,000,000 orders (use <code>ExecuteSql</code> with a set-based INSERT, or batch inserts, from Lesson 16).</li>
+    <li>Time offset pagination for pages 1, 1,000 and 40,000 (page size 25).</li>
+    <li>Implement keyset pagination on <code>(PlacedUtc, Id)</code> with the index above and time the same depth.</li>
+    <li>In SQL Server Management Studio or Azure Data Studio, look at the actual execution plans. Compare "rows read" in each.</li>
+  </ol>
+  <details><summary>What to expect</summary>
+  <p>Offset page 40,000 reads about 1M rows. Keyset reads about 25 using an index seek. Times typically differ by one or two orders of magnitude.</p>
+  </details>
+</div>
+
+<h2 id="quiz">Quiz</h2>
+
+<div class="quiz" data-answer="b">
+<p class="q">Why does <code>Skip(100000).Take(20)</code> get slow on large tables?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. EF downloads all 100,020 rows</button>
+<button class="opt" type="button" data-opt="b">B. The database still has to read and discard the skipped rows</button>
+<button class="opt" type="button" data-opt="c">C. The query cache is bypassed</button>
+<button class="opt" type="button" data-opt="d">D. OFFSET isn't supported by SQL Server</button>
+</div>
+<p class="explain">The database discards skipped rows server-side, but still has to read them. EF doesn't download them.</p>
+</div>
+
+<div class="quiz" data-answer="d">
+<p class="q">What's required for keyset pagination to give consistent results?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. A clustered columnstore index</button>
+<button class="opt" type="button" data-opt="b">B. <code>AsNoTracking()</code></button>
+<button class="opt" type="button" data-opt="c">C. A GUID primary key</button>
+<button class="opt" type="button" data-opt="d">D. A unique, deterministic sort order (e.g. date + id) used in both the WHERE and ORDER BY</button>
+</div>
+<p class="explain">The cursor must identify a unique position, so include a unique tie-breaker column.</p>
+</div>
+
+<div class="quiz" data-answer="a">
+<p class="q">What's the main downside of keyset pagination?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. You can't jump directly to an arbitrary page number</button>
+<button class="opt" type="button" data-opt="b">B. It can't be indexed</button>
+<button class="opt" type="button" data-opt="c">C. It always needs raw SQL</button>
+<button class="opt" type="button" data-opt="d">D. It's slower for the first page</button>
+</div>
+<p class="explain">Keyset navigates relative to a cursor: next and previous only.</p>
+</div>
+
+<h2 id="further-reading">Further reading</h2>
+<ul>
+  <li><a href="https://learn.microsoft.com/ef/core/querying/pagination" target="_blank" rel="noopener">Microsoft Learn: Pagination</a></li>
+  <li><a href="https://use-the-index-luke.com/no-offset" target="_blank" rel="noopener">Use The Index, Luke: No offset</a></li>
+</ul>
+<p class="reviewed">Last reviewed October 2026 against EF Core 10 (LTS). Spotted an error? Select it, right-click, and ask the AI tutor to double-check it, or open an issue in the repository.</p>
+</article>
+<nav id="pager" aria-label="Lesson navigation"></nav>
+</main>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="../assets/js/course.js"></script>
+<script src="../assets/js/ai-assistant.js"></script>
+</body>
+</html>

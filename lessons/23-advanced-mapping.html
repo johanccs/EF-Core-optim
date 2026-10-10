@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src https:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Advanced Mapping for Performance · EF Core Optimization Course</title>
+<meta name="description" content="Mapping decisions are performance decisions. Inheritance strategy, value objects, JSON columns, table splitting and value converters all change the SQL EF generates. This lesson covers the trade-offs.">
+<meta property="og:title" content="Advanced Mapping for Performance">
+<meta property="og:description" content="Mapping decisions are performance decisions. Inheritance strategy, value objects, JSON columns, table splitting and value converters all change the SQL EF generates. This lesson covers the trade-offs.">
+<meta property="og:type" content="article">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/course.css">
+<script src="../assets/js/theme-init.js"></script>
+</head>
+<body data-lesson="23" data-root="../">
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="layout">
+<nav id="sidebar" aria-label="Lessons"></nav>
+<main class="content" id="main">
+<noscript><p class="callout warn">Navigation, quizzes and progress tracking need JavaScript. The lesson text below still works without it.</p></noscript>
+<article>
+<h1>Advanced Mapping for Performance</h1>
+<p class="lead">Mapping decisions are performance decisions. Inheritance strategy, value objects, JSON columns, table splitting and value converters all change the SQL EF generates. This lesson covers the trade-offs.</p>
+<div class="meta"><span class="badge">⏱ 40 min</span></div>
+
+<div class="goal">
+  <span class="title">🎯 Goal of this lesson</span>
+  <p>Learn how <b>mapping choices change the generated SQL</b>: inheritance strategies, value objects, JSON columns, table splitting and converters.</p>
+  <p><b>Why it matters:</b> Mapping decisions are hard to change once data exists. Choosing them with performance in mind avoids joins, unions and unindexable predicates later.</p>
+</div>
+
+<div class="objectives">
+  <h2 class="box-title" id="by-the-end-of-this-lesson-you-will-be-able-to">By the end of this lesson you will be able to</h2>
+  <ul>
+    <li>Choose between TPH, TPT and TPC inheritance based on query patterns.</li>
+    <li>Use complex types, owned types and JSON columns appropriately.</li>
+    <li>Use table splitting to avoid loading large columns.</li>
+    <li>Understand the query impact of value converters and primitive collections.</li>
+  </ul>
+</div>
+
+<h2 id="inheritance-mapping-strategies">Inheritance mapping strategies</h2>
+<p>Suppose a <code>Payment</code> base class has subclasses <code>CardPayment</code>, <code>BankTransfer</code> and <code>WalletPayment</code>.</p>
+
+<pre><code class="language-csharp">// TPH: default, one table with a discriminator column
+modelBuilder.Entity&lt;Payment&gt;().HasDiscriminator&lt;string&gt;(&quot;Kind&quot;);
+
+// TPT: one table per type, joined on the primary key
+modelBuilder.Entity&lt;Payment&gt;().UseTptMappingStrategy();
+
+// TPC: one table per CONCRETE type, no shared base table (EF Core 7+)
+modelBuilder.Entity&lt;Payment&gt;().UseTpcMappingStrategy();</code></pre>
+
+<table>
+  <thead><tr><th scope="col">Scenario</th><th scope="col">TPH (table-per-hierarchy)</th><th scope="col">TPT (table-per-type)</th><th scope="col">TPC (table-per-concrete-type)</th></tr></thead>
+  <tbody>
+  <tr><td>Query all payments</td><td>✅ Single table scan</td><td>❌ LEFT JOINs to every subtype table</td><td>⚠ <code>UNION ALL</code> across tables</td></tr>
+  <tr><td>Query one subtype</td><td>✅ <code>WHERE Kind = 'Card'</code></td><td>⚠ JOIN base + subtype</td><td>✅ Single table, no JOIN</td></tr>
+  <tr><td>Insert</td><td>✅ 1 row</td><td>❌ 2+ rows in 2+ tables</td><td>✅ 1 row</td></tr>
+  <tr><td>Schema</td><td>Many nullable columns</td><td>Normalized</td><td>Columns duplicated per table</td></tr>
+  <tr><td>Keys</td><td>Identity OK</td><td>Identity OK</td><td>Needs keys unique across tables (EF uses a sequence by default)</td></tr>
+  </tbody>
+</table>
+<div class="callout tip"><span class="title">Guidance from the EF team</span>
+Use <b>TPH</b> by default: it's generally the fastest. Use <b>TPC</b> when you mostly query individual leaf types and the hierarchy is wide. Avoid <b>TPT</b> unless an existing schema forces it, because its JOINs grow with the hierarchy.</div>
+
+<h2 id="value-objects-complex-types-vs-owned-types">Value objects: complex types vs owned types</h2>
+<p>For a value like <code>Address</code> (Street, City, Zip) stored in the owner's table:</p>
+
+<pre><code class="language-csharp">public record Address(string Street, string City, string Zip);
+
+// Complex type (EF Core 8+): value semantics, no identity, columns in the owner&#x27;s table
+modelBuilder.Entity&lt;Customer&gt;().ComplexProperty(c =&gt; c.ShippingAddress);
+
+// Owned type: has a hidden key, tracked like an entity
+modelBuilder.Entity&lt;Customer&gt;().OwnsOne(c =&gt; c.BillingAddress);</code></pre>
+<ul>
+  <li><b>Complex types</b> are the modern choice for value objects. They're compared by value, you can assign the same instance to two properties, and they carry no identity overhead. EF 10 added optional (nullable) complex types (they currently need at least one required property), struct complex types, and JSON mapping. The EF team now recommends complex types over owned types for table splitting and JSON.</li>
+  <li><b>Owned types</b> behave more like dependent entities with keys. Use them where you need identity semantics, or for owned collections on older EF versions.</li>
+</ul>
+
+<h2 id="json-columns">JSON columns</h2>
+<p>Store a nested structure in one JSON column instead of extra tables and joins:</p>
+
+<pre><code class="language-csharp">public class Order
+{
+    // ...
+    public ShippingInfo Shipping { get; set; } = null!;
+}
+public class ShippingInfo
+{
+    public string Carrier { get; set; } = &quot;&quot;;
+    public string TrackingNo { get; set; } = &quot;&quot;;
+    public List&lt;ShipmentEvent&gt; Events { get; set; } = new();
+}
+
+// EF 10: complex type mapped to JSON
+modelBuilder.Entity&lt;Order&gt;().ComplexProperty(o =&gt; o.Shipping, s =&gt; s.ToJson());
+// EF 7–9: modelBuilder.Entity&lt;Order&gt;().OwnsOne(o =&gt; o.Shipping, s =&gt; s.ToJson());
+
+// LINQ queries into the JSON document
+var fedex = await db.Orders.Where(o =&gt; o.Shipping.Carrier == &quot;FedEx&quot;).ToListAsync();
+// SQL Server: WHERE JSON_VALUE([o].[Shipping], &#x27;$.Carrier&#x27;) = N&#x27;FedEx&#x27;</code></pre>
+<p><b>Good for</b>: data always read and written together with its owner, flexible attributes, event lists. It saves joins and tables.</p>
+<p><b>Watch out</b>: predicates on JSON properties can't use a normal index. On SQL Server, add a computed column over <code>JSON_VALUE</code> and index it. On PostgreSQL, use <code>jsonb</code> with a GIN or expression index. Large documents are rewritten on update. On Azure SQL and SQL Server 2025, EF 10 uses the native <code>json</code> type by default (with <code>UseAzureSql</code> or compatibility level 170+). It stores JSON more efficiently and translates to <code>JSON_VALUE(... RETURNING type)</code>. See Lesson 7.</p>
+
+<h2 id="table-splitting-lazy-columns-without-lazy-loading">Table splitting: lazy columns without lazy loading</h2>
+<p>Most product queries never need the 2 KB <code>Description</code>. Projections are one answer (Lesson 11). Table splitting is another: map two entity types to the <b>same table</b>, and load the heavy part only when needed.</p>
+
+<pre><code class="language-csharp">public class Product        { public int Id { get; set; } public string Name { get; set; } = &quot;&quot;; public decimal Price { get; set; }
+                              public ProductDetails Details { get; set; } = null!; }
+public class ProductDetails { public int Id { get; set; } public string Description { get; set; } = &quot;&quot;; public byte[]? Image { get; set; } }
+
+modelBuilder.Entity&lt;Product&gt;(b =&gt;
+{
+    b.ToTable(&quot;Products&quot;);
+    b.HasOne(p =&gt; p.Details).WithOne().HasForeignKey&lt;ProductDetails&gt;(d =&gt; d.Id);
+});
+modelBuilder.Entity&lt;ProductDetails&gt;().ToTable(&quot;Products&quot;);
+
+var list = await db.Products.ToListAsync();                               // no Description/Image
+var full = await db.Products.Include(p =&gt; p.Details).SingleAsync(p =&gt; p.Id == id);</code></pre>
+
+<h2 id="value-converters">Value converters</h2>
+
+<pre><code class="language-csharp">modelBuilder.Entity&lt;Order&gt;().Property(o =&gt; o.Status).HasConversion&lt;string&gt;().HasMaxLength(16);</code></pre>
+<ul>
+  <li>Comparisons and equality on converted properties work. EF converts the parameter, not the column, so indexes are still used.</li>
+  <li>⚠ <b>Ordering</b> uses the stored representation: enum-as-string sorts alphabetically, not by enum value.</li>
+  <li>⚠ Operations that depend on the .NET type's semantics, such as range comparisons on a value encrypted or serialized by a converter, can't translate meaningfully.</li>
+  <li>Converters add a small per-value materialization cost. Usually negligible.</li>
+</ul>
+
+<h2 id="primitive-collections">Primitive collections</h2>
+<p>EF Core 8+ maps <code>List&lt;string&gt;</code>, <code>int[]</code> and similar to a JSON column automatically:</p>
+
+<pre><code class="language-csharp">public class Product { /* ... */ public List&lt;string&gt; Tags { get; set; } = new(); }
+
+var tagged = await db.Products.Where(p =&gt; p.Tags.Contains(&quot;sale&quot;)).ToListAsync();
+// SQL Server: WHERE N&#x27;sale&#x27; IN (SELECT [t].[value] FROM OPENJSON([p].[Tags]) AS [t])</code></pre>
+<p>It's convenient, but every such filter shreds the JSON for each row, so it can't use an index. If you filter by tags frequently and the table is large, model a proper <code>ProductTag</code> table with an index. On PostgreSQL, native arrays with a GIN index are an efficient alternative.</p>
+
+<div class="takeaways">
+  <h2 class="box-title" id="key-takeaways">🔑 Key takeaways</h2>
+  <ul>
+    <li>TPH is generally fastest. TPC suits leaf-type queries. Avoid TPT unless a schema forces it.</li>
+    <li>Complex types (value semantics) are now the recommended way to map value objects and JSON.</li>
+    <li>JSON columns save joins, but predicates inside them need explicit indexing.</li>
+    <li>Table splitting and converters change SQL. Check ordering and indexability on converted columns.</li>
+  </ul>
+</div>
+
+<h2 id="exercise">Exercise</h2>
+<div class="exercise">
+  <h3 class="box-title" id="same-hierarchy-three-strategies">🛠 Same hierarchy, three strategies</h3>
+  <ol>
+    <li>Model <code>Payment</code> with 3 subtypes, each with 2 extra properties. Seed 100k payments.</li>
+    <li>For each of TPH, TPT and TPC, inspect the SQL and time: (a) all payments for an order, (b) all card payments last month, (c) inserting 10k payments.</li>
+    <li>Split <code>Product.Description</code> into <code>ProductDetails</code> with table splitting, and confirm the list query no longer selects it.</li>
+  </ol>
+</div>
+
+<h2 id="quiz">Quiz</h2>
+
+<div class="quiz" data-answer="a">
+<p class="q">Which inheritance strategy does the EF team generally recommend as the default for performance?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. TPH</button>
+<button class="opt" type="button" data-opt="b">B. TPT</button>
+<button class="opt" type="button" data-opt="c">C. TPC</button>
+<button class="opt" type="button" data-opt="d">D. They're equivalent</button>
+</div>
+<p class="explain">TPH uses one table with no joins or unions. TPC is good for leaf-type queries. TPT is usually the slowest.</p>
+</div>
+
+<div class="quiz" data-answer="d">
+<p class="q">What's the main performance concern with filtering on a property inside a JSON column?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. EF can't translate it</button>
+<button class="opt" type="button" data-opt="b">B. It forces client evaluation</button>
+<button class="opt" type="button" data-opt="c">C. It requires a split query</button>
+<button class="opt" type="button" data-opt="d">D. A regular index can't be used without extra work, such as a computed column or a GIN or expression index</button>
+</div>
+<p class="explain">JSON path expressions are evaluated per row unless you index them explicitly.</p>
+</div>
+
+<div class="quiz" data-answer="b">
+<p class="q">You store <code>OrderStatus</code> as a string with a value converter. What happens with <code>OrderBy(o =&gt; o.Status)</code>?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. It sorts by enum numeric value</button>
+<button class="opt" type="button" data-opt="b">B. It sorts alphabetically by the stored string</button>
+<button class="opt" type="button" data-opt="c">C. EF throws an exception</button>
+<button class="opt" type="button" data-opt="d">D. It sorts in memory</button>
+</div>
+<p class="explain">Ordering happens in the database, on the stored representation.</p>
+</div>
+
+<h2 id="further-reading">Further reading</h2>
+<ul>
+  <li><a href="https://learn.microsoft.com/ef/core/performance/modeling-for-performance" target="_blank" rel="noopener">Modeling for performance</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/modeling/inheritance" target="_blank" rel="noopener">Inheritance</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/modeling/complex-types" target="_blank" rel="noopener">Complex types</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/modeling/table-splitting" target="_blank" rel="noopener">Table splitting</a></li>
+</ul>
+<p class="reviewed">Last reviewed October 2026 against EF Core 10 (LTS). Spotted an error? Select it, right-click, and ask the AI tutor to double-check it, or open an issue in the repository.</p>
+</article>
+<nav id="pager" aria-label="Lesson navigation"></nav>
+</main>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="../assets/js/course.js"></script>
+<script src="../assets/js/ai-assistant.js"></script>
+</body>
+</html>

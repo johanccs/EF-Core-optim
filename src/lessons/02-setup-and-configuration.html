@@ -1,0 +1,214 @@
+<h1>Setup, Configuration &amp; Logging SQL</h1>
+<p class="lead">Before you optimize anything you need to see the SQL EF Core runs. This lesson covers registering a DbContext properly, the options worth knowing, and making EF show you what it's doing.</p>
+<div class="meta"><span class="badge">⏱ 25 min</span></div>
+
+<div class="goal">
+  <span class="title">🎯 Goal of this lesson</span>
+  <p>Get a correctly configured DbContext running quickly and, above all, <b>make EF show you the SQL it executes</b>. That habit underpins the rest of the course.</p>
+  <p><b>Why it matters:</b> Most EF performance problems are invisible until you look at the generated SQL. Logging and the right lifetime from day one prevent whole classes of bugs. Level 2 then goes deeper into configuration.</p>
+</div>
+
+<div class="objectives">
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
+  <ul>
+    <li>Register a DbContext in ASP.NET Core with the right lifetime.</li>
+    <li>Configure provider options: connection strings, timeouts, retries.</li>
+    <li>Log generated SQL with <code>LogTo</code> and <code>ILoggerFactory</code>, and filter the output.</li>
+    <li>Know which diagnostic options are safe in production and which are not.</li>
+  </ul>
+</div>
+
+<h2>Registering the DbContext</h2>
+<p>In ASP.NET Core, register the context with dependency injection. <code>AddDbContext</code> registers it with a <b>scoped</b> lifetime: one instance per HTTP request. That's exactly the unit-of-work lifetime you want.</p>
+
+```csharp label="Program.cs"
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddDbContext<ShopContext>(options =>
+    options.UseSqlServer(
+        builder.Configuration.GetConnectionString("Shop"),
+        sql =>
+        {
+            sql.CommandTimeout(30);                 // seconds
+            sql.EnableRetryOnFailure(               // transient fault handling (Lesson 17)
+                maxRetryCount: 5,
+                maxRetryDelay: TimeSpan.FromSeconds(10),
+                errorNumbersToAdd: null);
+        }));
+```
+
+```json label="appsettings.json"
+{
+  "ConnectionStrings": {
+    "Shop": "Server=.;Database=Shop;Trusted_Connection=True;TrustServerCertificate=True;Max Pool Size=200"
+  }
+}
+```
+
+<div class="callout warn"><span class="title">Lifetimes matter</span>
+<ul>
+<li><b>Never register a DbContext as a singleton.</b> It isn't thread-safe and its change tracker grows forever.</li>
+<li>Don't inject a scoped DbContext into a singleton service such as a hosted <code>BackgroundService</code>. Inject <code>IDbContextFactory&lt;T&gt;</code> or <code>IServiceScopeFactory</code> and create a short-lived context per unit of work.</li>
+</ul></div>
+
+<h3>When you need a factory</h3>
+<p>Blazor Server, background workers and parallel processing need several short-lived contexts inside one scope. Register a factory:</p>
+
+```csharp
+builder.Services.AddDbContextFactory<ShopContext>(o => o.UseSqlServer(connStr));
+
+public class NightlyReportJob(IDbContextFactory<ShopContext> factory) : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken ct)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var count = await db.Orders.CountAsync(o => o.Status == OrderStatus.Pending, ct);
+        // ...
+    }
+}
+```
+
+<h2>Seeing the SQL</h2>
+<p>This is the most important habit in the whole course: <b>always know what SQL your code produces</b>. There are several ways to see it.</p>
+
+<h3>1. <code>LogTo</code>: quick and simple</h3>
+
+```csharp
+options.UseSqlServer(connStr)
+       .LogTo(Console.WriteLine, LogLevel.Information);
+```
+
+<p>Filter the output to just executed commands:</p>
+
+```csharp
+options.LogTo(
+    Console.WriteLine,
+    new[] { DbLoggerCategory.Database.Command.Name },
+    LogLevel.Information);
+```
+
+<h3>2. ASP.NET Core logging: the production-friendly way</h3>
+<p><code>AddDbContext</code> automatically picks up the application's <code>ILoggerFactory</code>. Control verbosity in <code>appsettings.Development.json</code>:</p>
+
+```json
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.EntityFrameworkCore.Database.Command": "Information"
+    }
+  }
+}
+```
+
+<p>Every executed command is then logged with its duration:</p>
+
+```plaintext
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (4ms) [Parameters=[@customerId='42'], CommandType='Text', CommandTimeout='30']
+      SELECT [o].[Id], [o].[CustomerId], ... FROM [Orders] AS [o] WHERE [o].[CustomerId] = @customerId
+```
+
+<h3>3. <code>ToQueryString()</code>: inspect without executing</h3>
+
+```csharp
+var query = db.Orders.Where(o => o.Total > 100).OrderBy(o => o.PlacedUtc);
+Console.WriteLine(query.ToQueryString());   // great in unit tests and in the debugger
+```
+
+<h2>Diagnostic options</h2>
+<table>
+  <tr><th>Option</th><th>What it does</th><th>Production?</th></tr>
+  <tr><td><code>EnableSensitiveDataLogging()</code></td><td>Includes parameter values and entity key values in logs and exception messages. (EF 10 also redacts constants it inlines into SQL unless this is on.)</td><td>❌ No. It leaks PII and secrets.</td></tr>
+  <tr><td><code>EnableDetailedErrors()</code></td><td>Better errors when materialization fails (e.g. a null in a non-nullable column). Small overhead.</td><td>⚠ Development only</td></tr>
+  <tr><td><code>LogTo(...)</code></td><td>Simple logging to a delegate.</td><td>⚠ Prefer ILogger</td></tr>
+  <tr><td><code>ConfigureWarnings(...)</code></td><td>Turns specific EF warnings into errors, or ignores them.</td><td>✅ Yes</td></tr>
+</table>
+
+```csharp
+builder.Services.AddDbContext<ShopContext>(options =>
+{
+    options.UseSqlServer(connStr);
+
+    if (builder.Environment.IsDevelopment())
+    {
+        options.EnableSensitiveDataLogging()
+               .EnableDetailedErrors();
+    }
+
+    // Fail fast on patterns that hurt performance (see Lessons 12 and 15)
+    options.ConfigureWarnings(w => w
+        .Throw(RelationalEventId.MultipleCollectionIncludeWarning));
+});
+```
+
+<div class="callout tip"><span class="title">Turn performance warnings into errors in development</span>
+EF logs warnings for risky patterns. Examples: loading several collections in one query (cartesian explosion), and <code>First()</code> without <code>OrderBy</code> (<code>CoreEventId.FirstWithoutOrderByAndFilterWarning</code>). Throwing on these in development catches problems before they reach production.</div>
+
+<h2>Connection pooling: already on</h2>
+<p>ADO.NET providers pool physical database connections by default. Opening and closing a <code>SqlConnection</code> just borrows from and returns to the pool. EF opens the connection as late as possible and closes it as early as possible, which is the right behaviour. Tune pool size in the connection string (<code>Max Pool Size</code>, default 100 for SqlClient) only if you see pool exhaustion errors under load.</p>
+<div class="callout info"><span class="title">Connection pooling ≠ DbContext pooling</span>
+Connection pooling (ADO.NET) reuses database connections. DbContext pooling (EF, Lesson 20) reuses <code>DbContext</code> objects. They solve different problems and work together.</div>
+
+<div class="callout new"><span class="title">Going deeper</span>
+This lesson covers just enough configuration to get started. <b>Level 2 · Configuration</b> covers the rest in depth: the options pipeline and design-time tools (Lesson 5), connection strings, secrets and pooling (Lesson 6), provider-specific settings (Lesson 7), model configuration at scale (Lesson 8), and environments and testing (Lesson 9).</div>
+
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Register the context with <code>AddDbContext</code> (scoped). Use a factory for singletons and background work.</li>
+    <li>Always know your SQL: <code>LogTo</code>, ILogger categories, and <code>ToQueryString()</code>.</li>
+    <li><code>EnableSensitiveDataLogging</code> and <code>EnableDetailedErrors</code> are for development only.</li>
+    <li>Turn EF performance warnings into exceptions during development.</li>
+  </ul>
+</div>
+
+<h2>Exercise</h2>
+<div class="exercise">
+  <h3 class="box-title">🛠 Make EF talk</h3>
+  <ol>
+    <li>Add <code>LogTo</code> filtered to <code>DbLoggerCategory.Database.Command</code> in your playground.</li>
+    <li>Run <code>db.Customers.FirstAsync()</code>. What warning appears, and what SQL is generated?</li>
+    <li>Print <code>db.Orders.Where(o =&gt; o.Total &gt; 500).ToQueryString()</code>. Notice the literal <code>500</code>: constants in the expression become SQL literals, while variables become parameters.</li>
+    <li>Enable <code>EnableSensitiveDataLogging</code> and compare the logged parameters.</li>
+  </ol>
+  <details><summary>What you should see</summary>
+  <p><code>FirstAsync()</code> without ordering gives a warning that results may be unpredictable, because the database doesn't guarantee row order without an <code>ORDER BY</code>. The SQL is <code>SELECT TOP(1) ... FROM [Customers]</code>. With sensitive logging on, parameters show their real values (<code>@id='42'</code>). Otherwise they appear as <code>'?'</code>.</p>
+  </details>
+</div>
+
+<h2>Quiz</h2>
+
+:::quiz b
+What lifetime does `AddDbContext` use by default?
+a) Singleton
+b) Scoped
+c) Transient
+d) Pooled
+> Scoped means one instance per request, which matches the unit-of-work pattern.
+:::
+
+:::quiz d
+Which option should never be on in production?
+a) `CommandTimeout`
+b) `EnableRetryOnFailure`
+c) `ConfigureWarnings`
+d) `EnableSensitiveDataLogging`
+> It writes parameter values (emails, tokens, personal data) into logs.
+:::
+
+:::quiz a
+A `BackgroundService` needs database access. What's the best approach?
+a) Inject `IDbContextFactory<ShopContext>` and create a context per unit of work
+b) Inject `ShopContext` directly into the constructor
+c) Store a static `ShopContext` instance
+d) Register the context as a singleton
+> Hosted services are singletons. A factory gives you correctly scoped, short-lived contexts.
+:::
+
+<h2>Further reading</h2>
+<ul>
+  <li><a href="https://learn.microsoft.com/ef/core/dbcontext-configuration/" target="_blank" rel="noopener">DbContext lifetime, configuration and initialization</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/logging-events-diagnostics/simple-logging" target="_blank" rel="noopener">Simple logging</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/miscellaneous/connection-strings" target="_blank" rel="noopener">Connection strings</a></li>
+</ul>

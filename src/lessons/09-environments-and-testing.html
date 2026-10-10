@@ -1,0 +1,196 @@
+<h1>Environments, Testing &amp; Configuration Safety</h1>
+<p class="lead">Development, CI, staging and production each need different EF settings, and you need proof that each configuration works. This lesson covers environment-specific configuration, startup validation, health checks and testing strategies.</p>
+<div class="meta"><span class="badge">⏱ 35 min</span></div>
+
+<div class="goal">
+  <span class="title">🎯 Goal of this lesson</span>
+  <p>Learn to <b>vary EF configuration safely across environments</b> and to <b>verify it automatically</b>: debug features on where they help, off where they hurt, misconfiguration caught before traffic arrives, and tests that exercise the real database behaviour.</p>
+  <p><b>Why it matters:</b> "worked in dev, broke in prod" usually means the environments were configured differently in ways nobody tested. Sensitive-data logging left on leaks personal data. Tests on the wrong provider pass while production fails. These are configuration mistakes you can prevent systematically.</p>
+</div>
+
+<div class="objectives">
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
+  <ul>
+    <li>Layer configuration by environment, and know which EF settings belong where.</li>
+    <li>Validate configuration at startup and expose database health checks.</li>
+    <li>Choose a testing strategy: real database in a container, SQLite in-memory, or fakes.</li>
+    <li>Replace the DbContext configuration in integration tests with <code>WebApplicationFactory</code>.</li>
+  </ul>
+</div>
+
+<h2>Environment layering</h2>
+<p>ASP.NET Core loads configuration in layers. Later sources override earlier ones:</p>
+<ol>
+  <li><code>appsettings.json</code>: shared defaults, no secrets.</li>
+  <li><code>appsettings.{Environment}.json</code>: per-environment overrides (<code>Development</code>, <code>Staging</code>, <code>Production</code>).</li>
+  <li>User secrets (Development only).</li>
+  <li>Environment variables.</li>
+  <li>Command-line arguments.</li>
+</ol>
+
+<h3>Recommended EF settings per environment</h3>
+<table>
+  <tr><th>Setting</th><th>Development</th><th>CI / Test</th><th>Production</th></tr>
+  <tr><td>SQL command logging</td><td>Information (see every query)</td><td>Information, or captured for assertions</td><td>Warning + slow-query interceptor</td></tr>
+  <tr><td><code>EnableSensitiveDataLogging</code></td><td>✅ On</td><td>✅ On (synthetic data)</td><td>❌ Off</td></tr>
+  <tr><td><code>EnableDetailedErrors</code></td><td>✅ On</td><td>✅ On</td><td>❌ Off</td></tr>
+  <tr><td>Performance warnings → errors</td><td>✅ Throw</td><td>✅ Throw (fail the build)</td><td>Log</td></tr>
+  <tr><td>Retry on failure</td><td>Optional</td><td>Off (failures should be visible)</td><td>✅ On</td></tr>
+  <tr><td>Migrations</td><td><code>Migrate()</code> at startup is fine</td><td>Apply scripts or a bundle in the pipeline</td><td>Scripts or bundle, never at app start</td></tr>
+</table>
+
+```csharp
+builder.Services.AddDbContext<ShopContext>((sp, o) =>
+{
+    var env = sp.GetRequiredService<IHostEnvironment>();
+    o.UseSqlServer(builder.Configuration.GetConnectionString("Shop"), sql =>
+    {
+        if (env.IsProduction()) sql.EnableRetryOnFailure();
+    });
+
+    if (!env.IsProduction())
+    {
+        o.EnableSensitiveDataLogging()
+         .EnableDetailedErrors()
+         .ConfigureWarnings(w => w.Throw(
+             RelationalEventId.MultipleCollectionIncludeWarning,
+             CoreEventId.NavigationLazyLoading));
+    }
+});
+```
+
+<h2>Fail fast: validation and health checks</h2>
+<p>Validate settings at startup (Lesson 5's <code>ValidateOnStart</code>), and give the platform a way to ask "can this instance reach its database?":</p>
+
+```csharp
+// Package: Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore
+builder.Services.AddHealthChecks()
+    .AddDbContextCheck<ShopContext>("database", tags: ["ready"]);
+
+app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = c => c.Tags.Contains("ready") });
+app.MapHealthChecks("/health/live",  new HealthCheckOptions { Predicate = _ => false });   // process is up
+```
+<p>Point the Kubernetes readiness probe, or the load balancer health check, at <code>/health/ready</code>. That way instances with broken configuration never receive traffic, and liveness doesn't restart pods just because the database had a blip.</p>
+
+<h2>Testing strategies</h2>
+<table>
+  <tr><th>Strategy</th><th>Fidelity</th><th>Speed</th><th>Verdict</th></tr>
+  <tr><td><b>Real database in a container</b> (Testcontainers)</td><td>✅ Exact: same SQL, constraints, collations, translations</td><td>Seconds to start, then fast</td><td>The recommended default for data-access tests</td></tr>
+  <tr><td><b>SQLite in-memory</b></td><td>⚠ Relational, but a different SQL dialect and type system</td><td>Very fast</td><td>OK for simple logic if production isn't SQLite. Translation bugs slip through.</td></tr>
+  <tr><td><b>EF InMemory provider</b></td><td>❌ Not relational: no SQL, no constraints, no transactions, different query semantics</td><td>Very fast</td><td>The EF team discourages it for testing. Avoid it.</td></tr>
+  <tr><td><b>Repository fakes/mocks</b></td><td>Tests business logic, not data access</td><td>Fastest</td><td>Good for unit tests above the data layer</td></tr>
+</table>
+
+<h3>Integration tests with Testcontainers</h3>
+
+```csharp
+// Packages: Testcontainers.MsSql, Microsoft.AspNetCore.Mvc.Testing, xunit (v2)
+public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
+{
+    private readonly MsSqlContainer _db = new MsSqlBuilder()
+        .WithImage("mcr.microsoft.com/mssql/server:2022-latest")   // pin the same version as production
+        .Build();
+
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        builder.UseEnvironment("Testing");
+        builder.ConfigureTestServices(services =>
+        {
+            // Remove the app's registration, then add one pointing at the container
+            // EF 9/10: remove every registration AddDbContext made, or EF reports
+            // "Services for database providers ... have been registered" (two providers)
+            services.RemoveAll<DbContextOptions<ShopContext>>();
+            services.RemoveAll<IDbContextOptionsConfiguration<ShopContext>>();
+            services.RemoveAll<ShopContext>();
+            services.AddDbContext<ShopContext>(o => o.UseSqlServer(_db.GetConnectionString()));
+        });
+    }
+
+    public async Task InitializeAsync()
+    {
+        await _db.StartAsync();
+        using var scope = Services.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<ShopContext>().Database.MigrateAsync();
+    }
+
+    // Explicit implementation: WebApplicationFactory already has its own DisposeAsync()
+    async Task IAsyncLifetime.DisposeAsync()
+    {
+        await _db.DisposeAsync();
+        await base.DisposeAsync();
+    }
+}
+```
+
+<h3>SQLite in-memory: keep the connection open</h3>
+
+```csharp
+var connection = new SqliteConnection("Data Source=:memory:");
+connection.Open();                                   // the database lives as long as this connection
+
+var options = new DbContextOptionsBuilder<ShopContext>().UseSqlite(connection).Options;
+using (var ctx = new ShopContext(options)) ctx.Database.EnsureCreated();
+// ... run tests with new ShopContext(options) ...
+connection.Dispose();                                // database disappears
+```
+
+<div class="callout tip"><span class="title">Test the configuration itself</span>
+Add a cheap test that builds the real host with production-like settings (minus secrets) and resolves <code>ShopContext</code>. Then assert on <code>db.Model</code> or <code>db.Database.ProviderName</code>. It catches broken DI registrations, invalid options and model validation errors on every build.</div>
+
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Layer configuration per environment. Debug features on in dev and test, off in production.</li>
+    <li>Validate options at startup and expose a database readiness check (not a liveness check).</li>
+    <li>Test data access against the real database engine (Testcontainers). Avoid the InMemory provider.</li>
+    <li>When replacing the context in integration tests on EF 9/10, remove all of AddDbContext's registrations first.</li>
+  </ul>
+</div>
+
+<h2>Exercise</h2>
+<div class="exercise">
+  <h3 class="box-title">🛠 Environment-proof setup</h3>
+  <ol>
+    <li>Implement the environment-specific <code>AddDbContext</code> above. Start the app as <code>Development</code> and as <code>Production</code>, and compare the logs.</li>
+    <li>Add <code>AddDbContextCheck</code> with ready and live endpoints. Stop the database and watch <code>/health/ready</code> turn unhealthy while <code>/health/live</code> stays healthy.</li>
+    <li>Write one integration test with Testcontainers that calls a real endpoint and asserts on both the HTTP result and the number of SQL commands (see Lesson 25's command counter).</li>
+  </ol>
+</div>
+
+<h2>Quiz</h2>
+
+:::quiz b
+Why does the EF team discourage the InMemory provider for testing?
+a) It's slow
+b) It isn't a relational database, so SQL translation, constraints and transactions behave differently
+c) It doesn't support async
+d) It requires Docker
+> Tests can pass on InMemory and fail against the real database. Prefer the real provider via Testcontainers.
+:::
+
+:::quiz c
+What must you do to keep a SQLite in-memory database alive across several contexts in a test?
+a) Use a file path instead
+b) Call `EnsureCreated()` on every context
+c) Open one `SqliteConnection` and pass that same connection to every context
+d) Enable MARS
+> An in-memory SQLite database is destroyed when its last connection closes.
+:::
+
+:::quiz a
+Which health-check setup avoids restarting healthy pods during a short database outage?
+a) Database check on the readiness probe only; liveness only checks that the process is up
+b) Database check on the liveness probe
+c) No health checks
+d) Database check on both probes
+> Readiness removes the instance from traffic. Liveness failures restart it, which doesn't help when the database is the problem.
+:::
+
+<h2>Further reading</h2>
+<ul>
+  <li><a href="https://learn.microsoft.com/ef/core/testing/" target="_blank" rel="noopener">Testing EF Core applications</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/testing/choosing-a-testing-strategy" target="_blank" rel="noopener">Choosing a testing strategy</a></li>
+  <li><a href="https://learn.microsoft.com/aspnet/core/test/integration-tests" target="_blank" rel="noopener">Integration tests in ASP.NET Core</a></li>
+  <li><a href="https://learn.microsoft.com/aspnet/core/host-and-deploy/health-checks" target="_blank" rel="noopener">Health checks in ASP.NET Core</a></li>
+  <li><a href="https://dotnet.testcontainers.org/" target="_blank" rel="noopener">Testcontainers for .NET</a></li>
+</ul>

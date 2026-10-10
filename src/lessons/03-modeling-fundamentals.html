@@ -1,0 +1,200 @@
+<h1>Modeling Fundamentals</h1>
+<p class="lead">Many performance problems start in the model. Unbounded string columns, wrong decimal types and missing relationships turn into slow queries later. This lesson shows how to configure a model deliberately.</p>
+<div class="meta"><span class="badge">⏱ 30 min</span></div>
+
+<div class="goal">
+  <span class="title">🎯 Goal of this lesson</span>
+  <p>Learn to <b>configure the model deliberately</b>: keys, relationships, column types, lengths and precision, rather than relying on conventions you haven't checked.</p>
+  <p><b>Why it matters:</b> The model decides the schema, and the schema decides what the database can do fast. Unbounded strings, truncated decimals and mismatched types become slow queries and data bugs that are expensive to fix later.</p>
+</div>
+
+<div class="objectives">
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
+  <ul>
+    <li>Explain EF Core's conventions and how to override them.</li>
+    <li>Choose between data annotations and the Fluent API, and organize configuration with <code>IEntityTypeConfiguration&lt;T&gt;</code>.</li>
+    <li>Configure keys, relationships, column types, lengths and precision.</li>
+    <li>Apply model-wide defaults with <code>ConfigureConventions</code>.</li>
+  </ul>
+</div>
+
+<h2>Conventions: what you get for free</h2>
+<p>EF Core builds the model by convention. A few defaults matter for performance:</p>
+<table>
+  <tr><th>Convention</th><th>Default</th><th>Performance consequence</th></tr>
+  <tr><td>Property named <code>Id</code> or <code>&lt;Type&gt;Id</code></td><td>Primary key. Integers use <code>IDENTITY</code> on SQL Server.</td><td>Fine. Lesson 16 covers HiLo and sequences for batching.</td></tr>
+  <tr><td><code>string</code> properties</td><td><code>nvarchar(max)</code> on SQL Server</td><td>⚠ Can't be used as an index key. Larger memory grants. Worse plans.</td></tr>
+  <tr><td><code>decimal</code> properties</td><td><code>decimal(18,2)</code>, with a warning</td><td>⚠ May silently truncate values. Configure precision explicitly.</td></tr>
+  <tr><td>Foreign key properties</td><td><b>An index is created automatically</b></td><td>✅ Joins and FK lookups are indexed.</td></tr>
+  <tr><td>Enums</td><td>Stored as <code>int</code></td><td>✅ Compact. Strings are more readable but larger.</td></tr>
+  <tr><td>Nullable reference types enabled</td><td><code>string</code> → <code>NOT NULL</code>, <code>string?</code> → <code>NULL</code></td><td>✅ Accurate nullability lets EF generate simpler SQL.</td></tr>
+</table>
+
+<h2>Data annotations vs Fluent API</h2>
+<div class="compare">
+  <div><span class="tag">Data annotations</span>
+
+```csharp
+public class Product
+{
+    public int Id { get; set; }
+
+    [Required, MaxLength(32)]
+    public string Sku { get; set; } = "";
+
+    [Precision(10, 2)]
+    public decimal Price { get; set; }
+}
+```
+  </div>
+  <div><span class="tag">Fluent API</span>
+
+```csharp
+modelBuilder.Entity<Product>(b =>
+{
+    b.Property(p => p.Sku)
+     .IsRequired()
+     .HasMaxLength(32);
+
+    b.Property(p => p.Price)
+     .HasPrecision(10, 2);
+});
+```
+  </div>
+</div>
+<p>The Fluent API is more powerful: indexes, filters, table splitting, conversions and query filters are Fluent-only. It also keeps persistence concerns out of your domain classes. A common team convention is <b>Fluent API only, one configuration class per entity</b>:</p>
+
+```csharp label="Configurations/ProductConfiguration.cs"
+public class ProductConfiguration : IEntityTypeConfiguration<Product>
+{
+    public void Configure(EntityTypeBuilder<Product> b)
+    {
+        b.ToTable("Products");
+        b.HasKey(p => p.Id);
+
+        b.Property(p => p.Sku).HasMaxLength(32).IsUnicode(false);   // varchar(32)
+        b.Property(p => p.Name).HasMaxLength(200);                   // nvarchar(200)
+        b.Property(p => p.Description).HasMaxLength(4000);
+        b.Property(p => p.Price).HasPrecision(10, 2);
+
+        b.HasIndex(p => p.Sku).IsUnique();
+
+        b.HasOne(p => p.Category)
+         .WithMany(c => c.Products)
+         .HasForeignKey(p => p.CategoryId)
+         .OnDelete(DeleteBehavior.Restrict);
+    }
+}
+
+// In ShopContext.OnModelCreating:
+modelBuilder.ApplyConfigurationsFromAssembly(typeof(ShopContext).Assembly);
+```
+
+<h2>Column types and why they matter</h2>
+<h3>Strings: always set a max length</h3>
+<p><code>nvarchar(max)</code> columns are stored differently. SQL Server can't use them as index key columns, and the optimizer has to assume large values when sizing memory grants. Use <code>HasMaxLength</code> for anything with a natural limit. Use <code>IsUnicode(false)</code> (<code>varchar</code>) for ASCII-only data such as SKUs, codes and hashes. It halves storage.</p>
+
+<div class="callout warn"><span class="title">Parameter type mismatch: a classic index killer</span>
+If a column is <code>varchar</code> but the parameter is sent as <code>nvarchar</code>, SQL Server must convert the column side and may stop using its index. EF sizes and types parameters from the model, so configure <code>IsUnicode(false)</code> in the model. Don't leave the database and the model out of sync.</div>
+
+<h3>Model-wide defaults with <code>ConfigureConventions</code></h3>
+<p>Instead of repeating configuration per property, set defaults once. This is <i>pre-convention model configuration</i>:</p>
+
+```csharp
+protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+{
+    configurationBuilder.Properties<string>().HaveMaxLength(256);
+    configurationBuilder.Properties<decimal>().HavePrecision(18, 2);
+    configurationBuilder.Properties<DateTime>().HaveColumnType("datetime2(3)");
+    configurationBuilder.Properties<OrderStatus>().HaveConversion<string>().HaveMaxLength(16);
+}
+```
+<p>Individual entity configuration still wins, so <code>Description</code> can override the 256 default with <code>HasMaxLength(4000)</code>.</p>
+
+<h2>Relationships</h2>
+<p>Define relationships explicitly when conventions are ambiguous, and choose delete behaviour on purpose:</p>
+
+```csharp
+modelBuilder.Entity<Order>(b =>
+{
+    b.HasOne(o => o.Customer)
+     .WithMany(c => c.Orders)
+     .HasForeignKey(o => o.CustomerId)
+     .OnDelete(DeleteBehavior.Restrict);      // don't cascade-delete order history
+
+    b.HasMany(o => o.Lines)
+     .WithOne()
+     .HasForeignKey(l => l.OrderId)
+     .OnDelete(DeleteBehavior.Cascade);       // lines belong to the order
+});
+```
+
+<div class="callout tip"><span class="title">Expose foreign key properties</span>
+Having <code>CustomerId</code> as a real property, not just the <code>Customer</code> navigation, lets you filter and set relationships without loading the related entity: <code>order.CustomerId = 42</code> instead of <code>order.Customer = await db.Customers.FindAsync(42)</code>. That saves a whole query.</div>
+
+<h2>Keys</h2>
+<ul>
+  <li><b>int / bigint identity</b>: compact, sequential, fast to index. The default choice.</li>
+  <li><b>GUID</b>: globally unique and generated client-side, but random GUIDs fragment clustered indexes. If you use GUIDs, prefer sequential ones. EF's SQL Server provider generates sequential GUIDs client-side by default for key properties. In .NET 9+, <code>Guid.CreateVersion7()</code> gives time-ordered GUIDs.</li>
+  <li><b>Natural keys</b> (e.g. <code>Sku</code>): usually better as a unique index than as the primary key, because they can change and are wider.</li>
+</ul>
+
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Conventions are a starting point, not a design. Check what EF generated with <code>Model.ToDebugString()</code>.</li>
+    <li>Always bound string lengths, set decimal precision, and use <code>IsUnicode(false)</code> for ASCII data.</li>
+    <li>EF indexes foreign keys automatically. Every other index is your job.</li>
+    <li>Expose foreign-key properties so you can set relationships without loading the related entity.</li>
+  </ul>
+</div>
+
+<h2>Exercise</h2>
+<div class="exercise">
+  <h3 class="box-title">🛠 Tighten the model</h3>
+  <ol>
+    <li>Move each entity's configuration into an <code>IEntityTypeConfiguration&lt;T&gt;</code> class.</li>
+    <li>Add <code>ConfigureConventions</code> with sensible string, decimal and DateTime defaults.</li>
+    <li>Make <code>Sku</code> and <code>Email</code> non-Unicode with a unique index.</li>
+    <li>Run <code>dotnet ef migrations add TightenModel</code> and read the generated migration. Check that every <code>nvarchar(max)</code> you didn't intend is gone.</li>
+  </ol>
+  <details><summary>Hint: review the model EF built</summary>
+  <p>Print <code>db.Model.ToDebugString()</code> to see every entity, property, type mapping, key and index EF knows about. It's a quick way to catch unintended conventions.</p>
+  </details>
+</div>
+
+<h2>Quiz</h2>
+
+:::quiz c
+What does an unconfigured `string` property map to on SQL Server?
+a) `varchar(255)`
+b) `nvarchar(450)`
+c) `nvarchar(max)`
+d) `text`
+> Unbounded `nvarchar(max)` can't be an index key column, so configure max lengths. (Key columns default to `nvarchar(450)`.)
+:::
+
+:::quiz a
+Does EF Core create indexes for foreign keys by convention?
+a) Yes, an index is created for each foreign key
+b) No, you must add them manually
+c) Only on SQL Server
+d) Only for required relationships
+> EF creates FK indexes by convention. Other indexes, like those for `WHERE` and `ORDER BY` columns, are up to you (Lesson 14).
+:::
+
+:::quiz b
+Where do you configure model-wide defaults such as "all strings are max 256"?
+a) `OnConfiguring`
+b) `ConfigureConventions`
+c) `OnModelCreating` with a loop over every entity
+d) `appsettings.json`
+> Pre-convention configuration in `ConfigureConventions` applies before conventions run, and per-property config can still override it.
+:::
+
+<h2>Further reading</h2>
+<ul>
+  <li><a href="https://learn.microsoft.com/ef/core/modeling/" target="_blank" rel="noopener">Creating and configuring a model</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/modeling/bulk-configuration" target="_blank" rel="noopener">Model bulk configuration (ConfigureConventions)</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/modeling/relationships" target="_blank" rel="noopener">Relationships</a></li>
+</ul>

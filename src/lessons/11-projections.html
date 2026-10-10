@@ -1,0 +1,225 @@
+<h1>Projections: Fetch Only What You Need</h1>
+<p class="lead">Projecting with <code>Select</code> is often the single biggest read optimization in EF Core. It shrinks the SQL result, skips tracking, lets the database use covering indexes and avoids loading graphs.</p>
+<div class="meta"><span class="badge">⏱ 25 min</span></div>
+
+<div class="goal">
+  <span class="title">🎯 Goal of this lesson</span>
+  <p>Master <b>projections</b>: shaping queries so the database returns exactly the columns your code needs, and nothing more.</p>
+  <p><b>Why it matters:</b> Fetching less data is often the single biggest read optimization. It reduces I/O, network traffic, memory and tracking, and it enables covering indexes.</p>
+</div>
+
+<div class="objectives">
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
+  <ul>
+    <li>Project entities into DTOs, records and anonymous types.</li>
+    <li>Pull related data through navigation properties inside a projection, without <code>Include</code>.</li>
+    <li>Write reusable projection expressions.</li>
+    <li>Avoid the classic projection pitfalls.</li>
+  </ul>
+</div>
+
+<h2>The problem: over-fetching</h2>
+<p>A product list page needs id, name and price. Loading full entities fetches every column, including the 2 KB <code>Description</code>:</p>
+
+<div class="compare">
+  <div class="bad"><span class="tag">❌ Full entities</span>
+
+```csharp
+var products = await db.Products
+    .Where(p => p.CategoryId == 3)
+    .ToListAsync();
+```
+
+```sql
+SELECT [p].[Id], [p].[CategoryId],
+  [p].[Description], [p].[Name],
+  [p].[Price], [p].[Sku]
+FROM [Products] AS [p]
+WHERE [p].[CategoryId] = 3
+```
+  </div>
+  <div class="good"><span class="tag">✅ Projection</span>
+
+```csharp
+var products = await db.Products
+    .Where(p => p.CategoryId == 3)
+    .Select(p => new { p.Id, p.Name, p.Price })
+    .ToListAsync();
+```
+
+```sql
+SELECT [p].[Id], [p].[Name], [p].[Price]
+FROM [Products] AS [p]
+WHERE [p].[CategoryId] = 3
+```
+  </div>
+</div>
+
+<p>Benefits of the projection:</p>
+<ul>
+  <li><b>Less I/O and network traffic</b>: only three columns travel.</li>
+  <li><b>No change tracking</b>: DTOs aren't entities.</li>
+  <li><b>Covering indexes</b>: an index on <code>CategoryId</code> that <code>INCLUDE</code>s <code>Name, Price</code> can answer the query without touching the table (Lesson 14).</li>
+  <li><b>Shape matches the API</b>: you stop leaking entities, and accidental lazy loads, into serialization.</li>
+</ul>
+
+<h2>Navigation properties inside projections</h2>
+<p>Inside a <code>Select</code> you can walk navigation properties freely. EF translates them into JOINs or subqueries. <b>No <code>Include</code> is needed</b>, and <code>Include</code> is ignored when the final result isn't an entity.</p>
+
+```csharp
+public record OrderSummary(int Id, DateTime PlacedUtc, string CustomerName, int LineCount, decimal Total);
+
+var summaries = await db.Orders
+    .Where(o => o.Status == OrderStatus.Paid)
+    .OrderByDescending(o => o.PlacedUtc)
+    .Select(o => new OrderSummary(
+        o.Id,
+        o.PlacedUtc,
+        o.Customer.Name,          // JOIN Customers
+        o.Lines.Count,            // correlated COUNT subquery
+        o.Lines.Sum(l => l.Quantity * l.UnitPrice)))
+    .Take(50)
+    .ToListAsync();
+```
+
+```sql label="Generated SQL (simplified)"
+SELECT TOP(@p) [o].[Id], [o].[PlacedUtc], [c].[Name],
+    (SELECT COUNT(*) FROM [OrderLines] AS [o0] WHERE [o].[Id] = [o0].[OrderId]),
+    (SELECT COALESCE(SUM(CAST([o1].[Quantity] AS decimal(18,2)) * [o1].[UnitPrice]), 0.0)
+       FROM [OrderLines] AS [o1] WHERE [o].[Id] = [o1].[OrderId])
+FROM [Orders] AS [o]
+INNER JOIN [Customers] AS [c] ON [o].[CustomerId] = [c].[Id]
+WHERE [o].[Status] = 1
+ORDER BY [o].[PlacedUtc] DESC
+```
+
+<h3>Nested collections</h3>
+<p>Projections can include child collections. EF fetches them with a JOIN, or with split queries if you ask (Lesson 15):</p>
+
+```csharp
+var detail = await db.Orders
+    .Where(o => o.Id == id)
+    .Select(o => new
+    {
+        o.Id,
+        Customer = o.Customer.Name,
+        Lines = o.Lines.Select(l => new { l.Product.Name, l.Quantity, l.UnitPrice }).ToList()
+    })
+    .SingleOrDefaultAsync();
+```
+
+<h2>Reusable projections</h2>
+<p>Duplicating projection code everywhere is error-prone. Store it as an <code>Expression&lt;Func&lt;T, TDto&gt;&gt;</code>, which stays translatable to SQL:</p>
+
+```csharp
+public record ProductListItem(int Id, string Name, decimal Price, string Category)
+{
+    public static readonly Expression<Func<Product, ProductListItem>> Projection =
+        p => new ProductListItem(p.Id, p.Name, p.Price, p.Category.Name);
+}
+
+var items = await db.Products.Where(p => p.Price < 50)
+                             .Select(ProductListItem.Projection)
+                             .ToListAsync();
+```
+
+<div class="callout danger"><span class="title">Don't hide projections in methods or constructors</span>
+EF can't see inside a C# method call or constructor body. If you write <code>.Select(p =&gt; ToDto(p))</code>, or a DTO constructor that takes the whole entity, then EF must fetch the <b>entire entity</b> and run your method client-side. The projection gives you no data reduction. Keep projections as expression trees that list exactly the columns you need.</div>
+
+<div class="compare">
+  <div class="bad"><span class="tag">❌ Fetches every column</span>
+
+```csharp
+.Select(p => new ProductDto(p))   // ctor reads p.*
+.Select(p => Map(p))              // opaque method
+```
+  </div>
+  <div class="good"><span class="tag">✅ Fetches 3 columns</span>
+
+```csharp
+.Select(p => new ProductDto
+{
+    Id = p.Id, Name = p.Name, Price = p.Price
+})
+```
+  </div>
+</div>
+
+<h3>What about AutoMapper and Mapster?</h3>
+<p>Mapping libraries can generate expression-based projections: AutoMapper's <code>ProjectTo&lt;T&gt;()</code>, Mapster's <code>ProjectToType&lt;T&gt;()</code>, and source generators such as Mapperly's queryable projections. These are fine. Avoid <code>Map&lt;T&gt;()</code> on already-loaded entities, because that is the over-fetching pattern again. Always check the generated SQL.</p>
+
+<h2>Projection pitfalls</h2>
+<ul>
+  <li><b>Projecting an entity inside an anonymous type</b> (<code>new { Product = p }</code>) fetches every column of that entity and tracks it.</li>
+  <li><b>Nullable navigations</b>: <code>o.Customer.Name</code> becomes a LEFT JOIN if the relationship is optional, so it can be <code>null</code>. Model the DTO property as nullable.</li>
+  <li><b>Aggregates on empty sets</b>: <code>Sum</code> of an empty collection becomes 0 (EF uses <code>COALESCE</code>). <code>Max</code> or <code>Average</code> on empty sets need a cast to a nullable type: <code>o.Lines.Max(l =&gt; (decimal?)l.UnitPrice)</code>.</li>
+</ul>
+
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Project with <code>Select</code> to fetch only the columns the caller needs. This is often the biggest single read win.</li>
+    <li>Navigations inside projections become JOINs or subqueries automatically. <code>Include</code> isn't needed there.</li>
+    <li>Keep projections as expression trees. Opaque constructors and methods force full-entity fetches.</li>
+    <li>Projections enable covering indexes and remove tracking overhead.</li>
+  </ul>
+</div>
+
+<h2>Exercise</h2>
+<div class="exercise">
+  <h3 class="box-title">🛠 Build a lean customer dashboard query</h3>
+  <p>Write one query that returns, for the 20 newest customers: Id, Name, number of orders, date of last order (nullable), and lifetime spend. Then print the SQL with <code>ToQueryString()</code>.</p>
+  <details><summary>Show solution</summary>
+
+```csharp
+var dashboard = await db.Customers
+    .OrderByDescending(c => c.CreatedUtc)
+    .Select(c => new
+    {
+        c.Id,
+        c.Name,
+        OrderCount = c.Orders.Count(),
+        LastOrderUtc = c.Orders.Max(o => (DateTime?)o.PlacedUtc),
+        LifetimeSpend = c.Orders.Sum(o => o.Total)
+    })
+    .Take(20)
+    .ToListAsync();
+```
+  <p>That's one round trip with no tracking and no order rows loaded into memory. The database does all the aggregation.</p>
+  </details>
+</div>
+
+<h2>Quiz</h2>
+
+:::quiz b
+Is `Include()` needed to read `o.Customer.Name` inside a `Select` projection?
+a) Yes, otherwise it's `null`
+b) No. Navigations in projections are translated to JOINs automatically.
+c) Only for collection navigations
+d) Only with lazy loading enabled
+> `Include` only matters when you return entities. In projections, EF joins whatever you reference.
+:::
+
+:::quiz d
+Why is `.Select(p => new ProductDto(p))` a performance trap?
+a) Constructors can't be used in LINQ
+b) It forces a split query
+c) It disables the query cache
+d) EF can't see which properties the constructor uses, so it fetches the whole entity
+> EF only translates what it can see in the expression tree. Opaque constructors and methods force full-entity fetches.
+:::
+
+:::quiz a
+Are DTO projections tracked by the change tracker?
+a) No, because DTOs aren't entity types
+b) Yes, always
+c) Only if `AsTracking()` is used
+d) Only when they include the primary key
+> Only entity instances are tracked. A DTO containing an entity instance still tracks that entity.
+:::
+
+<h2>Further reading</h2>
+<ul>
+  <li><a href="https://learn.microsoft.com/ef/core/performance/efficient-querying#project-only-properties-you-need" target="_blank" rel="noopener">Efficient querying: project only properties you need</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/querying/complex-query-operators" target="_blank" rel="noopener">Complex query operators</a></li>
+</ul>

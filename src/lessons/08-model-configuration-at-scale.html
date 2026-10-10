@@ -1,0 +1,219 @@
+<h1>Model Configuration at Scale</h1>
+<p class="lead">Configuring five entities is easy. Configuring two hundred consistently is a design problem. This lesson covers organizing model configuration so it stays correct, reviewable and uniform as the model grows.</p>
+<div class="meta"><span class="badge">⏱ 35 min</span></div>
+
+<div class="goal">
+  <span class="title">🎯 Goal of this lesson</span>
+  <p>Learn to structure model configuration for a <b>real, growing codebase</b>: where each kind of configuration belongs, how precedence works, how to apply rules model-wide, and how to seed and inspect the model with confidence.</p>
+  <p><b>Why it matters:</b> inconsistent configuration causes subtle bugs and slow queries: some strings bounded and others not, some decimals truncated, enums stored differently in different tables. Centralized rules and a clear structure make the correct choice the default, and make deviations obvious in code review.</p>
+</div>
+
+<div class="objectives">
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
+  <ul>
+    <li>Explain configuration precedence: conventions, data annotations, Fluent API.</li>
+    <li>Organize configuration with <code>IEntityTypeConfiguration&lt;T&gt;</code> and shared base configurations.</li>
+    <li>Apply model-wide rules with <code>ConfigureConventions</code>, including global value converters.</li>
+    <li>Configure schemas, naming, default values and computed columns.</li>
+    <li>Choose between <code>HasData</code> and <code>UseSeeding</code> for seed data.</li>
+  </ul>
+</div>
+
+<h2>Precedence: who wins?</h2>
+<p>EF builds the model in layers. Later, more explicit layers override earlier ones:</p>
+<ol>
+  <li><b>Pre-convention configuration</b> (<code>ConfigureConventions</code>): defaults for types, applied before conventions run.</li>
+  <li><b>Conventions</b>: EF's built-in rules (keys named <code>Id</code>, FK discovery…) plus any custom conventions.</li>
+  <li><b>Data annotations</b>: <code>[MaxLength]</code>, <code>[Required]</code>, <code>[Precision]</code>, etc.</li>
+  <li><b>Fluent API</b> in <code>OnModelCreating</code>: always wins.</li>
+</ol>
+<div class="callout tip"><span class="title">Pick one primary style</span>
+Mixing annotations and Fluent API for the same concern makes it hard to know what's actually configured. Common team rule: use the Fluent API for everything persistence-related, and keep entities free of EF attributes.</div>
+
+<h2>Organizing configuration</h2>
+
+```plaintext
+Shop.Data/
+  ShopContext.cs
+  Configurations/
+    Sales/
+      OrderConfiguration.cs
+      OrderLineConfiguration.cs
+    Catalog/
+      ProductConfiguration.cs
+      CategoryConfiguration.cs
+    Common/
+      AuditableConfiguration.cs
+```
+
+<p>Shared column rules belong in an abstract base configuration:</p>
+
+```csharp
+public interface IAuditable { DateTime CreatedUtc { get; set; } DateTime? ModifiedUtc { get; set; } }
+
+public abstract class AuditableConfiguration<T> : IEntityTypeConfiguration<T> where T : class, IAuditable
+{
+    public virtual void Configure(EntityTypeBuilder<T> b)
+    {
+        b.Property(e => e.CreatedUtc).HasDefaultValueSql("SYSUTCDATETIME()");
+        b.Property(e => e.ModifiedUtc);
+    }
+}
+
+public sealed class OrderConfiguration : AuditableConfiguration<Order>
+{
+    public override void Configure(EntityTypeBuilder<Order> b)
+    {
+        base.Configure(b);
+        b.ToTable("Orders", "sales");
+        b.Property(o => o.Total).HasPrecision(12, 2);
+        b.HasIndex(o => new { o.CustomerId, o.PlacedUtc });
+    }
+}
+
+// ShopContext.OnModelCreating
+modelBuilder.ApplyConfigurationsFromAssembly(typeof(ShopContext).Assembly);
+```
+
+<h2>Model-wide rules with ConfigureConventions</h2>
+
+```csharp
+protected override void ConfigureConventions(ModelConfigurationBuilder c)
+{
+    // Type defaults
+    c.Properties<string>().HaveMaxLength(256);
+    c.Properties<decimal>().HavePrecision(18, 2);
+    c.Properties<DateTime>().HaveColumnType("datetime2(3)");
+
+    // Enums stored as readable strings everywhere
+    c.Properties<Enum>().HaveConversion<string>().HaveMaxLength(32);
+
+    // Strongly-typed IDs: one converter for the whole model
+    c.Properties<CustomerId>().HaveConversion<CustomerIdConverter>();
+
+    // Never map these types
+    c.IgnoreAny<IDomainEvent>();
+}
+
+public readonly record struct CustomerId(int Value);
+public sealed class CustomerIdConverter() : ValueConverter<CustomerId, int>(id => id.Value, v => new CustomerId(v));
+```
+<p>Per-property Fluent configuration still overrides these defaults, so <code>Product.Description</code> can use <code>HasMaxLength(4000)</code> while every other string defaults to 256.</p>
+
+<h2>Schemas, naming and database-generated values</h2>
+
+```csharp
+modelBuilder.HasDefaultSchema("shop");                                  // all tables → shop.*
+
+modelBuilder.Entity<Order>(b =>
+{
+    b.ToTable("Orders", "sales", t => t.HasCheckConstraint("CK_Orders_Total", "[Total] >= 0"));
+    b.Property(o => o.PlacedUtc).HasDefaultValueSql("SYSUTCDATETIME()");
+    b.Property(o => o.Status).HasDefaultValue(OrderStatus.Pending);
+});
+
+modelBuilder.Entity<OrderLine>()
+    .Property<decimal>("LineTotal")                                     // shadow property
+    .HasComputedColumnSql("[Quantity] * [UnitPrice]", stored: true);    // persisted computed column
+```
+<div class="callout warn"><span class="title">Defaults and the CLR default value</span>
+When a property has a database default, EF only omits it from the INSERT if the property still holds its <b>CLR default</b> (0, null, the first enum member…). If that CLR default is also a valid value you want to save, configure a different <i>sentinel</i> with <code>HasSentinel</code> (EF 8+), or make the property nullable.</div>
+
+<h2>Seed data: HasData vs UseSeeding</h2>
+<table>
+  <tr><th>Aspect</th><th><code>HasData</code> (model-managed)</th><th><code>UseSeeding</code> / <code>UseAsyncSeeding</code> (EF 9+)</th></tr>
+  <tr><td>How it works</td><td>Seed rows become part of the model. Migrations generate INSERT, UPDATE and DELETE statements to keep them in sync.</td><td>Your code runs during <code>Migrate()</code>, <code>EnsureCreated()</code> and <code>dotnet ef database update</code>.</td></tr>
+  <tr><td>Keys</td><td>Must be specified explicitly</td><td>Any logic you like</td></tr>
+  <tr><td>Best for</td><td>Small, static reference data: countries, statuses, categories</td><td>Larger or computed data, data depending on other data, dev and test data</td></tr>
+</table>
+
+```csharp
+// Static reference data
+modelBuilder.Entity<Category>().HasData(
+    new Category { Id = 1, Name = "Books" },
+    new Category { Id = 2, Name = "Games" });
+
+// Runtime seeding (EF 9+). Implement both for tools and app code.
+options.UseSqlServer(connStr)
+    .UseSeeding((ctx, _) =>
+    {
+        if (!ctx.Set<Product>().Any())
+        {
+            ctx.Set<Product>().Add(new Product { Sku = "DEMO-1", Name = "Demo", Price = 9.99m, CategoryId = 1 });
+            ctx.SaveChanges();
+        }
+    })
+    .UseAsyncSeeding(async (ctx, _, ct) =>
+    {
+        if (!await ctx.Set<Product>().AnyAsync(ct))
+        {
+            ctx.Set<Product>().Add(new Product { Sku = "DEMO-1", Name = "Demo", Price = 9.99m, CategoryId = 1 });
+            await ctx.SaveChangesAsync(ct);
+        }
+    });
+```
+
+<h2>Inspecting the result</h2>
+<ul>
+  <li><code>db.Model.ToDebugString()</code> prints every entity, property, column type, key, index and relationship EF ended up with.</li>
+  <li><code>dotnet ef dbcontext info</code> shows the provider, database and context options.</li>
+  <li><b>Review every migration diff.</b> It's the clearest record of what a configuration change does to the database.</li>
+</ul>
+
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Precedence: pre-convention configuration &lt; conventions &lt; data annotations &lt; Fluent API.</li>
+    <li>Organize with <code>IEntityTypeConfiguration&lt;T&gt;</code> and shared base configurations. Apply model-wide rules in <code>ConfigureConventions</code>.</li>
+    <li>Use <code>HasData</code> for small static reference data, and <code>UseSeeding</code>/<code>UseAsyncSeeding</code> (EF 9+) for everything else.</li>
+    <li>Review every migration diff. It shows exactly what a configuration change does.</li>
+  </ul>
+</div>
+
+<h2>Exercise</h2>
+<div class="exercise">
+  <h3 class="box-title">🛠 Make it consistent</h3>
+  <ol>
+    <li>Introduce <code>IAuditable</code> and <code>AuditableConfiguration&lt;T&gt;</code>, and apply them to Order and Customer.</li>
+    <li>Add <code>ConfigureConventions</code> rules for strings, decimals and enums-as-strings. Generate a migration and review every changed column.</li>
+    <li>Introduce a <code>CustomerId</code> strongly-typed ID with a global converter, and check that queries like <code>Where(c =&gt; c.Id == id)</code> still translate to SQL.</li>
+    <li>Seed the categories with <code>HasData</code> and demo products with <code>UseAsyncSeeding</code>.</li>
+  </ol>
+</div>
+
+<h2>Quiz</h2>
+
+:::quiz c
+A property has `[MaxLength(50)]` and `HasMaxLength(100)` in `OnModelCreating`. Which applies?
+a) 50
+b) The smaller value
+c) 100, because the Fluent API overrides data annotations
+d) Neither. EF throws.
+> Fluent API configuration has the highest precedence.
+:::
+
+:::quiz a
+When is `HasData` the right choice for seeding?
+a) Small, static reference data with known keys that should be versioned with migrations
+b) Large generated test datasets
+c) Data that depends on the current date
+d) Data loaded from an external API
+> HasData is part of the model and migrations. Use UseSeeding (EF 9+) for dynamic or larger data.
+:::
+
+:::quiz d
+Where do you register a value converter that should apply to every property of a type across the model?
+a) In every entity configuration class
+b) In `OnConfiguring`
+c) With a data annotation on each property
+d) In `ConfigureConventions` with `Properties<T>().HaveConversion<...>()`
+> Pre-convention configuration applies type-wide defaults in one place.
+:::
+
+<h2>Further reading</h2>
+<ul>
+  <li><a href="https://learn.microsoft.com/ef/core/modeling/" target="_blank" rel="noopener">Creating and configuring a model</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/modeling/bulk-configuration" target="_blank" rel="noopener">Model bulk configuration</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/modeling/data-seeding" target="_blank" rel="noopener">Data seeding</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/modeling/generated-properties" target="_blank" rel="noopener">Generated values</a></li>
+</ul>

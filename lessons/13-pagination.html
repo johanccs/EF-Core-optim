@@ -40,10 +40,11 @@ pageSize = Math.Clamp(pageSize, 1, MaxPageSize);</code></pre>
 
 <h2>Offset pagination (Skip/Take)</h2>
 
-<pre><code class="language-csharp">var page = await db.Orders
+<pre><code class="language-csharp">var skip = (pageNumber - 1) * pageSize;
+var page = await db.Orders
     .AsNoTracking()
     .OrderByDescending(o =&gt; o.PlacedUtc).ThenByDescending(o =&gt; o.Id)   // deterministic order!
-    .Skip((pageNumber - 1) * pageSize)
+    .Skip(skip)
     .Take(pageSize)
     .Select(o =&gt; new { o.Id, o.PlacedUtc, o.Total })
     .ToListAsync();</code></pre>
@@ -51,7 +52,7 @@ pageSize = Math.Clamp(pageSize, 1, MaxPageSize);</code></pre>
 <pre data-label="SQL Server"><code class="language-sql">SELECT [o].[Id], [o].[PlacedUtc], [o].[Total]
 FROM [Orders] AS [o]
 ORDER BY [o].[PlacedUtc] DESC, [o].[Id] DESC
-OFFSET @__p_0 ROWS FETCH NEXT @__p_1 ROWS ONLY</code></pre>
+OFFSET @skip ROWS FETCH NEXT @pageSize ROWS ONLY</code></pre>
 
 <div class="callout warn"><span class="title">Always order by a unique key</span>
 Without a total ordering the database may return rows in any order, so rows can repeat or vanish between pages. Add the primary key as a tie-breaker: <code>.ThenBy(o =&gt; o.Id)</code>.</div>
@@ -63,16 +64,16 @@ Without a total ordering the database may return rows in any order, so rows can 
 <p>Instead of "skip N rows", say "give me rows <b>after the last one I saw</b>". With an index on the sort key, the database seeks directly to the position. Page 5,000 costs the same as page 1.</p>
 
 <pre><code class="language-csharp">// First page: lastId = null
-var query = db.Orders.AsNoTracking().OrderBy(o =&gt; o.Id);
+IQueryable&lt;Order&gt; query = db.Orders.AsNoTracking();
 
 if (lastId is not null)
     query = query.Where(o =&gt; o.Id &gt; lastId);          // seek predicate
 
-var page = await query.Take(pageSize).ToListAsync();
+var page = await query.OrderBy(o =&gt; o.Id).Take(pageSize).ToListAsync();
 var nextCursor = page.LastOrDefault()?.Id;           // return to client</code></pre>
 
-<pre><code class="language-sql">SELECT TOP(@__p_1) ... FROM [Orders] AS [o]
-WHERE [o].[Id] &gt; @__lastId_0
+<pre><code class="language-sql">SELECT TOP(@pageSize) ... FROM [Orders] AS [o]
+WHERE [o].[Id] &gt; @lastId
 ORDER BY [o].[Id]</code></pre>
 
 <h3>Composite sort keys</h3>

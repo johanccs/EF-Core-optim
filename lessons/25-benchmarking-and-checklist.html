@@ -126,9 +126,15 @@ export default function () {
 <pre><code class="language-csharp">public sealed class CommandCounter : DbCommandInterceptor
 {
     public int Count;
+
+    public override InterceptionResult&lt;DbDataReader&gt; ReaderExecuting(
+        DbCommand c, CommandEventData e, InterceptionResult&lt;DbDataReader&gt; r)
+    { Interlocked.Increment(ref Count); return r; }
+
     public override ValueTask&lt;InterceptionResult&lt;DbDataReader&gt;&gt; ReaderExecutingAsync(
         DbCommand c, CommandEventData e, InterceptionResult&lt;DbDataReader&gt; r, CancellationToken ct = default)
     { Interlocked.Increment(ref Count); return ValueTask.FromResult(r); }
+    // Add NonQueryExecuting/ScalarExecuting overrides to also count ExecuteUpdate/ExecuteDelete/ExecuteSql.
 }
 
 [Fact]

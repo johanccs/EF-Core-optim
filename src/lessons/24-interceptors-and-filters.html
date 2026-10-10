@@ -40,16 +40,29 @@ public interface IAuditable { DateTime CreatedUtc { get; set; } DateTime? Modifi
 
 public sealed class AuditInterceptor(TimeProvider clock) : SaveChangesInterceptor
 {
+    // Override BOTH: SaveChanges() calls the sync hook, SaveChangesAsync() the async one.
+    public override InterceptionResult<int> SavingChanges(DbContextEventData eventData, InterceptionResult<int> result)
+    {
+        Stamp(eventData.Context);
+        return result;
+    }
+
     public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
         DbContextEventData eventData, InterceptionResult<int> result, CancellationToken ct = default)
     {
+        Stamp(eventData.Context);
+        return ValueTask.FromResult(result);
+    }
+
+    private void Stamp(DbContext? context)
+    {
+        if (context is null) return;
         var now = clock.GetUtcNow().UtcDateTime;
-        foreach (var e in eventData.Context!.ChangeTracker.Entries<IAuditable>())
+        foreach (var e in context.ChangeTracker.Entries<IAuditable>())
         {
             if (e.State == EntityState.Added) e.Entity.CreatedUtc = now;
             if (e.State == EntityState.Modified) e.Entity.ModifiedUtc = now;
         }
-        return ValueTask.FromResult(result);
     }
 }
 ```
@@ -62,12 +75,25 @@ public sealed class RecompileHintInterceptor : DbCommandInterceptor
 {
     public const string Tag = "-- hint:recompile";
 
+    public override InterceptionResult<DbDataReader> ReaderExecuting(
+        DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result)
+    {
+        AddHint(command);
+        return result;
+    }
+
     public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
         DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken ct = default)
     {
+        AddHint(command);
+        return ValueTask.FromResult(result);
+    }
+
+    private static void AddHint(DbCommand command)
+    {
+        // TagWith("hint:recompile") makes EF emit "-- hint:recompile" as the first line
         if (command.CommandText.StartsWith(Tag, StringComparison.Ordinal))
             command.CommandText += " OPTION (RECOMPILE)";
-        return ValueTask.FromResult(result);
     }
 }
 
@@ -150,7 +176,7 @@ protected override void ConfigureConventions(ModelConfigurationBuilder configura
     <li>Add a <code>CommandCountingInterceptor</code> that counts commands per request (store the counter in an <code>AsyncLocal</code> or a scoped service) and logs a warning above 10. Use it to catch an N+1.</li>
     <li>Create the matching tenant-first and filtered indexes and check the plans.</li>
   </ol>
-  <details><summary>Soft-delete interceptor sketch</summary>
+  <details><summary>Soft-delete interceptor sketch (async hook shown; override the sync <code>SavingChanges</code> too)</summary>
 
 ```csharp
 public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData e, InterceptionResult<int> r, CancellationToken ct = default)

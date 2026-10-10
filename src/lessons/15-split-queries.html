@@ -75,7 +75,7 @@ var dto = await db.Customers
   <tr><td>Round trips</td><td>1</td><td>1 + number of collection includes</td></tr>
   <tr><td>Data duplication</td><td>High with collections</td><td>None</td></tr>
   <tr><td>Consistency</td><td>Atomic snapshot</td><td>⚠ Data can change between queries unless you use a serializable or snapshot transaction</td></tr>
-  <tr><td>Skip/Take on the root</td><td>Fine</td><td>⚠ Needs a <b>unique</b> ordering, or child queries may not match the root page</td></tr>
+  <tr><td>Skip/Take on the root</td><td>Fine</td><td>⚠ Before EF 10, a non-unique ordering could make child queries load data for different root rows. EF 10 adds the key to the ordering of every split query automatically. A deterministic ordering is still good practice.</td></tr>
   <tr><td>Best when</td><td>Reference navigations only, or one small collection; high-latency networks</td><td>Several or large collections, wide parent rows</td></tr>
 </table>
 
@@ -136,7 +136,7 @@ a) The ordering is unique, e.g. ends with the primary key
 b) You use `AsNoTracking()`
 c) MARS is enabled
 d) The page size is under 100
-> Each split query re-applies the paging. A non-unique ordering can select different root rows in each query.
+> Each split query re-applies the paging. With a non-unique ordering, EF 9 and earlier could select different root rows in each query. EF 10 makes the ordering consistent automatically, but explicit unique ordering keeps results deterministic on every version.
 :::
 
 <h2>Further reading</h2>

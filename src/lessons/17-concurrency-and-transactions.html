@@ -49,15 +49,15 @@ WHERE [Id] = @p1 AND [RowVersion] = @p2;
 <h3>Handling conflicts</h3>
 
 ```csharp
-var saved = false;
-while (!saved)
+const int maxAttempts = 3;
+for (var attempt = 1; ; attempt++)
 {
     try
     {
         await db.SaveChangesAsync();
-        saved = true;
+        break;
     }
-    catch (DbUpdateConcurrencyException ex)
+    catch (DbUpdateConcurrencyException ex) when (attempt < maxAttempts)   // don't retry forever
     {
         foreach (var entry in ex.Entries)
         {

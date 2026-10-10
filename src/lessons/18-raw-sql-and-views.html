@@ -73,7 +73,7 @@ db.Products.FromSqlRaw(
 ```
   </div>
 </div>
-<p><code>FromSqlRaw</code> and <code>ExecuteSqlRaw</code> exist for <b>dynamic SQL structure</b>, such as table or column names you can't parameterize. Validate those identifiers against an allow-list, and still pass values as parameters.</p>
+<p><code>FromSqlRaw</code> and <code>ExecuteSqlRaw</code> exist for <b>dynamic SQL structure</b>, such as table or column names you can't parameterize. Validate those identifiers against an allow-list, and still pass values as parameters. Since EF 10, a built-in analyzer warns when you concatenate strings inside a raw SQL call.</p>
 
 <h2>SqlQuery: unmapped types and scalars</h2>
 <p>EF Core 8+ can materialize <b>any type</b> from SQL. It doesn't need to be in your model:</p>

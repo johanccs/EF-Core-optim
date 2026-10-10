@@ -105,6 +105,9 @@ public enum OrderStatus { Pending, Paid, Shipped, Cancelled }</code></pre>
     }
 }</code></pre>
 
+<div class="callout info"><span class="title">About the code samples</span>
+Snippets in this course are <b>excerpts</b>. Entity classes, configuration and usage normally live in different files, so a snippet can show a class next to the code that uses it. Assume the usual <code>using</code> directives (<code>Microsoft.EntityFrameworkCore</code>, etc.), plus a <code>db</code> variable holding a <code>ShopContext</code>.</div>
+
 <h2>The key building blocks</h2>
 <table>
   <tr><th>Piece</th><th>What it does</th><th>Performance relevance</th></tr>
@@ -135,8 +138,10 @@ public enum OrderStatus { Pending, Paid, Shipped, Cancelled }</code></pre>
 
 <pre data-label="Generated SQL (SQL Server)"><code class="language-sql">SELECT [o].[Id], [o].[CustomerId], [o].[PlacedUtc], [o].[Status], [o].[Total]
 FROM [Orders] AS [o]
-WHERE [o].[CustomerId] = @__customerId_0 AND [o].[Status] = 1
+WHERE [o].[CustomerId] = @customerId AND [o].[Status] = 1
 ORDER BY [o].[PlacedUtc] DESC</code></pre>
+
+<p class="hint" style="color:var(--muted);font-size:14px">Parameter names in this course follow EF 10, which names parameters after your variables (<code>@customerId</code>). EF 9 and earlier generate names like <code>@__customerId_0</code>.</p>
 
 <div class="callout tip"><span class="title">Rule of thumb</span>
 In most applications the database dominates: round trips, rows scanned, rows transferred. Fix data access patterns first (what you fetch and how many queries you send). Micro-optimize EF itself last.</div>
@@ -240,7 +245,7 @@ await db.SaveChangesAsync();   // EF batches these inserts. Lesson 16 explains h
 <button class="opt" type="button" data-opt="c">C. SQL Server caches the result set</button>
 <button class="opt" type="button" data-opt="d">D. It isn't a cache hit. Each value compiles a new query.</button>
 </div>
-<p class="explain">Closure variables become parameters (<code>@__customerId_0</code>). Lesson 21 shows how constants can break this.</p>
+<p class="explain">Closure variables become parameters (<code>@customerId</code>). Lesson 21 shows how constants can break this.</p>
 </div>
 
 <h2>Further reading</h2>

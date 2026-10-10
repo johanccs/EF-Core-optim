@@ -56,7 +56,7 @@ modelBuilder.Entity<Customer>().ComplexProperty(c => c.ShippingAddress);
 modelBuilder.Entity<Customer>().OwnsOne(c => c.BillingAddress);
 ```
 <ul>
-  <li><b>Complex types</b> are the modern choice for value objects. They're compared by value, you can assign the same instance to two properties, and they carry no identity overhead. EF 10 added optional (nullable) complex types and JSON mapping for them.</li>
+  <li><b>Complex types</b> are the modern choice for value objects. They're compared by value, you can assign the same instance to two properties, and they carry no identity overhead. EF 10 added optional (nullable) complex types (they currently need at least one required property), struct complex types, and JSON mapping. The EF team now recommends complex types over owned types for table splitting and JSON.</li>
   <li><b>Owned types</b> behave more like dependent entities with keys. Use them where you need identity semantics, or for owned collections on older EF versions.</li>
 </ul>
 
@@ -85,7 +85,7 @@ var fedex = await db.Orders.Where(o => o.Shipping.Carrier == "FedEx").ToListAsyn
 // SQL Server: WHERE JSON_VALUE([o].[Shipping], '$.Carrier') = N'FedEx'
 ```
 <p><b>Good for</b>: data always read and written together with its owner, flexible attributes, event lists. It saves joins and tables.</p>
-<p><b>Watch out</b>: predicates on JSON properties can't use a normal index. On SQL Server, add a computed column over <code>JSON_VALUE</code> and index it. On PostgreSQL, use <code>jsonb</code> with a GIN or expression index. Large documents are rewritten on update. Newer SQL Server and Azure SQL versions have a native <code>json</code> type that EF 10 can target.</p>
+<p><b>Watch out</b>: predicates on JSON properties can't use a normal index. On SQL Server, add a computed column over <code>JSON_VALUE</code> and index it. On PostgreSQL, use <code>jsonb</code> with a GIN or expression index. Large documents are rewritten on update. On Azure SQL and SQL Server 2025, EF 10 uses the native <code>json</code> type by default (with <code>UseAzureSql</code> or compatibility level 170+). It stores JSON more efficiently and translates to <code>JSON_VALUE(... RETURNING type)</code>. See Lesson 7.</p>
 
 <h2>Table splitting: lazy columns without lazy loading</h2>
 <p>Most product queries never need the 2 KB <code>Description</code>. Projections are one answer (Lesson 11). Table splitting is another: map two entity types to the <b>same table</b>, and load the heavy part only when needed.</p>

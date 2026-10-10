@@ -85,7 +85,7 @@ UPDATE [p]
 SET [p].[Price] = [p].[Price] * 1.10,
     [p].[Name] = [p].[Name] + N' (new price)'
 FROM [Products] AS [p]
-WHERE [p].[CategoryId] = @__categoryId_0
+WHERE [p].[CategoryId] = @categoryId
 ```
 
 ```csharp
@@ -141,8 +141,8 @@ modelBuilder.UseHiLo();
 
 ```csharp
 // SqlBulkCopy sketch using the EF connection
-var conn = (SqlConnection)db.Database.GetDbConnection();
-await conn.OpenAsync();
+var conn = (SqlConnection)db.Database.GetDbConnection();   // Microsoft.Data.SqlClient
+if (conn.State != ConnectionState.Open) await conn.OpenAsync();   // EF may already have it open
 using var bulk = new SqlBulkCopy(conn) { DestinationTableName = "Products", BatchSize = 10_000 };
 bulk.ColumnMappings.Add(nameof(Product.Sku), "Sku");
 bulk.ColumnMappings.Add(nameof(Product.Name), "Name");

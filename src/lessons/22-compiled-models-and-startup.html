@@ -54,12 +54,13 @@ options.UseSqlServer(connStr)
 <div class="callout new"><span class="title">EF Core 9+: less ceremony</span>
 <ul>
 <li><b>Auto-discovery</b>: if the compiled model is in the same assembly as the context, EF finds and uses it without <code>UseModel</code>.</li>
-<li><b>MSBuild integration</b>: add the <code>Microsoft.EntityFrameworkCore.Tasks</code> package and set <code>&lt;EFOptimizeContext&gt;true&lt;/EFOptimizeContext&gt;</code> in the project file. The compiled model is then regenerated on build, by default for Release builds, so it can't go stale.</li>
+<li><b>MSBuild integration</b>: add the <code>Microsoft.EntityFrameworkCore.Tasks</code> package and set <code>&lt;EFOptimizeContext&gt;true&lt;/EFOptimizeContext&gt;</code> (plus <code>&lt;EFScaffoldModelStage&gt;build&lt;/EFScaffoldModelStage&gt;</code>) in the project file. The compiled model is then regenerated whenever the project builds, so it can't go stale. See the MSBuild integration docs for which configurations it runs in.</li>
 </ul></div>
 
 ```xml label="Shop.Data.csproj"
 <PropertyGroup>
   <EFOptimizeContext>true</EFOptimizeContext>
+  <EFScaffoldModelStage>build</EFScaffoldModelStage>
 </PropertyGroup>
 <ItemGroup>
   <PackageReference Include="Microsoft.EntityFrameworkCore.Tasks" Version="10.0.*" PrivateAssets="all" />
@@ -86,8 +87,9 @@ using (var scope = app.Services.CreateScope())
     _ = db.Model;                                   // model (or compiled model) loaded
     await db.Database.CanConnectAsync();            // first physical connection, pool primed
 
-    // Optionally execute your hottest queries once to fill the query cache
-    _ = await db.Products.AsNoTracking().Where(p => p.Id == 0).Select(p => p.Id).ToListAsync();
+    // Optionally run each HOT query shape once to fill the query cache.
+    // The cache key is the query's shape, not its values, so any harmless value works.
+    _ = await productQueries.GetByCategoryAsync(db, categoryId: 0);   // your real query method
 }
 
 app.Run();

@@ -88,7 +88,7 @@ var affected = await db.Products
 SET [p].[Price] = [p].[Price] * 1.10,
     [p].[Name] = [p].[Name] + N&#x27; (new price)&#x27;
 FROM [Products] AS [p]
-WHERE [p].[CategoryId] = @__categoryId_0</code></pre>
+WHERE [p].[CategoryId] = @categoryId</code></pre>
 
 <pre><code class="language-csharp">// Purge old cancelled orders: one DELETE
 await db.Orders
@@ -136,8 +136,8 @@ modelBuilder.UseHiLo();</code></pre>
 </table>
 
 <pre><code class="language-csharp">// SqlBulkCopy sketch using the EF connection
-var conn = (SqlConnection)db.Database.GetDbConnection();
-await conn.OpenAsync();
+var conn = (SqlConnection)db.Database.GetDbConnection();   // Microsoft.Data.SqlClient
+if (conn.State != ConnectionState.Open) await conn.OpenAsync();   // EF may already have it open
 using var bulk = new SqlBulkCopy(conn) { DestinationTableName = &quot;Products&quot;, BatchSize = 10_000 };
 bulk.ColumnMappings.Add(nameof(Product.Sku), &quot;Sku&quot;);
 bulk.ColumnMappings.Add(nameof(Product.Name), &quot;Name&quot;);

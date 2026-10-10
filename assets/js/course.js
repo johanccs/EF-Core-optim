@@ -108,7 +108,13 @@
       save(THEME_KEY, next);
       paint();
     });
-    bar.querySelector("#menu-btn").addEventListener("click", function () { body.classList.toggle("nav-open"); });
+    var menuBtn = bar.querySelector("#menu-btn");
+    menuBtn.setAttribute("aria-expanded", "false");
+    menuBtn.setAttribute("aria-controls", "sidebar");
+    menuBtn.addEventListener("click", function () {
+      var open = body.classList.toggle("nav-open");
+      menuBtn.setAttribute("aria-expanded", open ? "true" : "false");
+    });
   }
 
   function updateProgressPill() {
@@ -131,7 +137,11 @@
     });
     nav.innerHTML = html;
     var active = nav.querySelector(".active");
-    if (active && active.scrollIntoView) active.scrollIntoView({ block: "center" });
+    if (active) {
+      active.setAttribute("aria-current", "page");
+      // Scroll only the sidebar (scrollIntoView would also scroll the page)
+      nav.scrollTop = Math.max(0, active.offsetTop - nav.clientHeight / 2);
+    }
   }
 
   /* ---------- Lesson header meta ---------- */

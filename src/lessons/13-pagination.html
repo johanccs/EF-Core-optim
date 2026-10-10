@@ -29,10 +29,11 @@ pageSize = Math.Clamp(pageSize, 1, MaxPageSize);
 <h2>Offset pagination (Skip/Take)</h2>
 
 ```csharp
+var skip = (pageNumber - 1) * pageSize;
 var page = await db.Orders
     .AsNoTracking()
     .OrderByDescending(o => o.PlacedUtc).ThenByDescending(o => o.Id)   // deterministic order!
-    .Skip((pageNumber - 1) * pageSize)
+    .Skip(skip)
     .Take(pageSize)
     .Select(o => new { o.Id, o.PlacedUtc, o.Total })
     .ToListAsync();
@@ -42,7 +43,7 @@ var page = await db.Orders
 SELECT [o].[Id], [o].[PlacedUtc], [o].[Total]
 FROM [Orders] AS [o]
 ORDER BY [o].[PlacedUtc] DESC, [o].[Id] DESC
-OFFSET @__p_0 ROWS FETCH NEXT @__p_1 ROWS ONLY
+OFFSET @skip ROWS FETCH NEXT @pageSize ROWS ONLY
 ```
 
 <div class="callout warn"><span class="title">Always order by a unique key</span>
@@ -56,18 +57,18 @@ Without a total ordering the database may return rows in any order, so rows can 
 
 ```csharp
 // First page: lastId = null
-var query = db.Orders.AsNoTracking().OrderBy(o => o.Id);
+IQueryable<Order> query = db.Orders.AsNoTracking();
 
 if (lastId is not null)
     query = query.Where(o => o.Id > lastId);          // seek predicate
 
-var page = await query.Take(pageSize).ToListAsync();
+var page = await query.OrderBy(o => o.Id).Take(pageSize).ToListAsync();
 var nextCursor = page.LastOrDefault()?.Id;           // return to client
 ```
 
 ```sql
-SELECT TOP(@__p_1) ... FROM [Orders] AS [o]
-WHERE [o].[Id] > @__lastId_0
+SELECT TOP(@pageSize) ... FROM [Orders] AS [o]
+WHERE [o].[Id] > @lastId
 ORDER BY [o].[Id]
 ```
 

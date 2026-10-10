@@ -107,7 +107,7 @@ dotnet ef migrations remove            # undo last (if not applied)</code></pre>
 <h3>Deploying migrations safely</h3>
 <table>
   <tr><th>Approach</th><th>How</th><th>Production?</th></tr>
-  <tr><td><code>context.Database.Migrate()</code> at startup</td><td>The app migrates itself on boot</td><td>⚠ Risky: races between instances, the app needs DDL permissions, startup failures. OK for dev and simple apps.</td></tr>
+  <tr><td><code>context.Database.Migrate()</code> at startup</td><td>The app migrates itself on boot</td><td>⚠ Not recommended for production: the app needs DDL permissions, startup gets slower, and a failed migration takes the app down. EF 9+ takes a lock so instances don't migrate concurrently, but the other risks remain. OK for dev and simple apps.</td></tr>
   <tr><td><b>Idempotent SQL script</b></td><td><code>dotnet ef migrations script --idempotent -o migrate.sql</code></td><td>✅ Reviewable by a DBA and runnable from CI/CD</td></tr>
   <tr><td><b>Migration bundle</b></td><td><code>dotnet ef migrations bundle --self-contained -r linux-x64</code> → <code>./efbundle --connection "..."</code></td><td>✅ A single executable, ideal for pipelines</td></tr>
 </table>

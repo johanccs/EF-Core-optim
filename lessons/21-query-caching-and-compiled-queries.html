@@ -43,7 +43,7 @@
 <h2>Constants vs parameters</h2>
 <p>EF decides from the expression tree:</p>
 <ul>
-  <li><b>Captured variables</b> (closures) become <b>parameters</b>: <code>Where(p =&gt; p.Id == id)</code> → <code>WHERE [p].[Id] = @__id_0</code></li>
+  <li><b>Captured variables</b> (closures) become <b>parameters</b>: <code>Where(p =&gt; p.Id == id)</code> → <code>WHERE [p].[Id] = @id</code></li>
   <li><b>Literals</b> become <b>constants</b> inlined in the SQL: <code>Where(p =&gt; p.Status == 1)</code> → <code>WHERE [p].[Status] = 1</code></li>
 </ul>
 <p>Literals in hand-written LINQ are fine, because the shape never changes. The problem appears when you build expressions dynamically:</p>
@@ -71,7 +71,7 @@
     // Let the compiler create the closure for you
     return p =&gt; p.Price &gt; min;
 }
-// WHERE [p].[Price] &gt; @__min_0</code></pre>
+// WHERE [p].[Price] &gt; @min</code></pre>
   </div>
 </div>
 
@@ -82,7 +82,7 @@ var valueExpr = Expression.Property(Expression.Constant(holder), &quot;Value&quo
 
 <h3>Forcing the choice: EF.Constant and EF.Parameter</h3>
 
-<pre><code class="language-csharp">// Force a parameter to be inlined as a constant (EF 8+).
+<pre><code class="language-csharp">// Force a parameter to be inlined as a constant (EF 8.0.2+).
 // Useful when the value is low-cardinality and a value-specific plan helps.
 var q1 = db.Orders.Where(o =&gt; o.Status == EF.Constant(status));
 
@@ -90,7 +90,7 @@ var q1 = db.Orders.Where(o =&gt; o.Status == EF.Constant(status));
 var q2 = db.Orders.Where(o =&gt; o.Total &gt; EF.Parameter(100m));</code></pre>
 
 <div class="callout tip"><span class="title">Check your hit rate</span>
-The <code>Microsoft.EntityFrameworkCore</code> metrics (Lesson 19) include the compiled query cache hit rate. In steady state it should be close to 100%. A persistently low value means something is generating unique query shapes.</div>
+The <code>Microsoft.EntityFrameworkCore</code> metrics (Lesson 19) report compiled query cache <b>hits</b> and <b>misses</b>. In steady state, misses should stop growing and the hit ratio should be close to 100%. Misses that keep climbing mean something is generating unique query shapes.</div>
 
 <h2>Collections: <code>Contains</code> translation</h2>
 <p>A very common query is "rows whose id is in this list":</p>

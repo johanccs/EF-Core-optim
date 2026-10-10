@@ -114,15 +114,15 @@ var orderCount = await db.Entry(customer).Collection(c => c.Orders).Query().Coun
 <p>With lazy loading, a navigation property loads itself from the database the first time you access it. It needs the <code>Microsoft.EntityFrameworkCore.Proxies</code> package, <code>UseLazyLoadingProxies()</code>, and <code>virtual</code> navigation properties.</p>
 
 ```csharp
+// 1. Configuration (Program.cs)
 options.UseSqlServer(connStr).UseLazyLoadingProxies();
 
-public class Order
-{
-    // ...
-    public virtual Customer Customer { get; set; } = null!;
-    public virtual List<OrderLine> Lines { get; set; } = new();
-}
+// 2. Entities: navigation properties must be virtual (Order.cs)
+//    public virtual Customer Customer { get; set; } = null!;
+//    public virtual List<OrderLine> Lines { get; set; } = new();
 
+// 3. Usage: looks innocent...
+decimal total = 0;
 foreach (var order in await db.Orders.ToListAsync())
     total += order.Lines.Sum(l => l.UnitPrice);   // ⚠ a hidden query per order = N+1
 ```

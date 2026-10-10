@@ -108,6 +108,7 @@ If you really must evaluate something in memory, make it obvious: filter as much
   <tr><td>Exactly one row by unique key</td><td><code>SingleOrDefaultAsync</code> (fetches TOP 2 to verify) or <code>FirstOrDefaultAsync</code> (TOP 1)</td><td><code>Where(...).ToList().FirstOrDefault()</code></td></tr>
   <tr><td>Entity by primary key</td><td><code>FindAsync(id)</code>: checks the change tracker first and may skip the database entirely</td><td>Nothing wrong with <code>FirstOrDefaultAsync</code>, but it always queries</td></tr>
   <tr><td>Aggregates</td><td><code>SumAsync</code>, <code>MaxAsync</code>, <code>GroupBy(...).Select(g =&gt; new { g.Key, Count = g.Count() })</code></td><td>Loading rows and aggregating in memory</td></tr>
+  <tr><td>Left outer join</td><td><code>LeftJoin(...)</code> (new LINQ operator in .NET 10, translated by EF 10). Navigation properties are usually simpler.</td><td>The <code>GroupJoin</code> + <code>SelectMany</code> + <code>DefaultIfEmpty</code> pattern (it still works, but it's hard to read)</td></tr>
   <tr><td>Count of children</td><td><code>Select(c =&gt; new { c.Id, OrderCount = c.Orders.Count() })</code></td><td><code>Include(c =&gt; c.Orders)</code> then <code>.Orders.Count</code></td></tr>
 </table>
 

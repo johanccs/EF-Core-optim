@@ -106,8 +106,8 @@ public class NightlyReportJob(IDbContextFactory&lt;ShopContext&gt; factory) : Ba
 <p>Every executed command is then logged with its duration:</p>
 
 <pre><code class="language-plaintext">info: Microsoft.EntityFrameworkCore.Database.Command[20101]
-      Executed DbCommand (4ms) [Parameters=[@__customerId_0=&#x27;42&#x27;], CommandType=&#x27;Text&#x27;, CommandTimeout=&#x27;30&#x27;]
-      SELECT [o].[Id], [o].[CustomerId], ... FROM [Orders] AS [o] WHERE [o].[CustomerId] = @__customerId_0</code></pre>
+      Executed DbCommand (4ms) [Parameters=[@customerId=&#x27;42&#x27;], CommandType=&#x27;Text&#x27;, CommandTimeout=&#x27;30&#x27;]
+      SELECT [o].[Id], [o].[CustomerId], ... FROM [Orders] AS [o] WHERE [o].[CustomerId] = @customerId</code></pre>
 
 <h3>3. <code>ToQueryString()</code>: inspect without executing</h3>
 
@@ -117,7 +117,7 @@ Console.WriteLine(query.ToQueryString());   // great in unit tests and in the de
 <h2>Diagnostic options</h2>
 <table>
   <tr><th>Option</th><th>What it does</th><th>Production?</th></tr>
-  <tr><td><code>EnableSensitiveDataLogging()</code></td><td>Includes parameter values and entity key values in logs and exception messages.</td><td>❌ No. It leaks PII and secrets.</td></tr>
+  <tr><td><code>EnableSensitiveDataLogging()</code></td><td>Includes parameter values and entity key values in logs and exception messages. (EF 10 also redacts constants it inlines into SQL unless this is on.)</td><td>❌ No. It leaks PII and secrets.</td></tr>
   <tr><td><code>EnableDetailedErrors()</code></td><td>Better errors when materialization fails (e.g. a null in a non-nullable column). Small overhead.</td><td>⚠ Development only</td></tr>
   <tr><td><code>LogTo(...)</code></td><td>Simple logging to a delegate.</td><td>⚠ Prefer ILogger</td></tr>
   <tr><td><code>ConfigureWarnings(...)</code></td><td>Turns specific EF warnings into errors, or ignores them.</td><td>✅ Yes</td></tr>
@@ -159,7 +159,7 @@ This lesson covers just enough configuration to get started. <b>Level 2 · Confi
     <li>Enable <code>EnableSensitiveDataLogging</code> and compare the logged parameters.</li>
   </ol>
   <details><summary>What you should see</summary>
-  <p><code>FirstAsync()</code> without ordering gives a warning that results may be unpredictable, because the database doesn't guarantee row order without an <code>ORDER BY</code>. The SQL is <code>SELECT TOP(1) ... FROM [Customers]</code>. With sensitive logging on, parameters show their real values (<code>@__id_0='42'</code>). Otherwise they appear as <code>'?'</code>.</p>
+  <p><code>FirstAsync()</code> without ordering gives a warning that results may be unpredictable, because the database doesn't guarantee row order without an <code>ORDER BY</code>. The SQL is <code>SELECT TOP(1) ... FROM [Customers]</code>. With sensitive logging on, parameters show their real values (<code>@id='42'</code>). Otherwise they appear as <code>'?'</code>.</p>
   </details>
 </div>
 

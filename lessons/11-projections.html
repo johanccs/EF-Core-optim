@@ -52,8 +52,7 @@ WHERE [p].[CategoryId] = 3</code></pre>
 
 <pre><code class="language-csharp">var products = await db.Products
     .Where(p =&gt; p.CategoryId == 3)
-    .Select(p =&gt; new ProductListItem(
-        p.Id, p.Name, p.Price))
+    .Select(p =&gt; new { p.Id, p.Name, p.Price })
     .ToListAsync();</code></pre>
 
 <pre><code class="language-sql">SELECT [p].[Id], [p].[Name], [p].[Price]

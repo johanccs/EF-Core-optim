@@ -53,16 +53,29 @@ Command interceptors run for <b>every</b> command. Keep them cheap. No I/O, no h
 
 public sealed class AuditInterceptor(TimeProvider clock) : SaveChangesInterceptor
 {
+    // Override BOTH: SaveChanges() calls the sync hook, SaveChangesAsync() the async one.
+    public override InterceptionResult&lt;int&gt; SavingChanges(DbContextEventData eventData, InterceptionResult&lt;int&gt; result)
+    {
+        Stamp(eventData.Context);
+        return result;
+    }
+
     public override ValueTask&lt;InterceptionResult&lt;int&gt;&gt; SavingChangesAsync(
         DbContextEventData eventData, InterceptionResult&lt;int&gt; result, CancellationToken ct = default)
     {
+        Stamp(eventData.Context);
+        return ValueTask.FromResult(result);
+    }
+
+    private void Stamp(DbContext? context)
+    {
+        if (context is null) return;
         var now = clock.GetUtcNow().UtcDateTime;
-        foreach (var e in eventData.Context!.ChangeTracker.Entries&lt;IAuditable&gt;())
+        foreach (var e in context.ChangeTracker.Entries&lt;IAuditable&gt;())
         {
             if (e.State == EntityState.Added) e.Entity.CreatedUtc = now;
             if (e.State == EntityState.Modified) e.Entity.ModifiedUtc = now;
         }
-        return ValueTask.FromResult(result);
     }
 }</code></pre>
 
@@ -73,12 +86,25 @@ public sealed class AuditInterceptor(TimeProvider clock) : SaveChangesIntercepto
 {
     public const string Tag = &quot;-- hint:recompile&quot;;
 
+    public override InterceptionResult&lt;DbDataReader&gt; ReaderExecuting(
+        DbCommand command, CommandEventData eventData, InterceptionResult&lt;DbDataReader&gt; result)
+    {
+        AddHint(command);
+        return result;
+    }
+
     public override ValueTask&lt;InterceptionResult&lt;DbDataReader&gt;&gt; ReaderExecutingAsync(
         DbCommand command, CommandEventData eventData, InterceptionResult&lt;DbDataReader&gt; result, CancellationToken ct = default)
     {
+        AddHint(command);
+        return ValueTask.FromResult(result);
+    }
+
+    private static void AddHint(DbCommand command)
+    {
+        // TagWith(&quot;hint:recompile&quot;) makes EF emit &quot;-- hint:recompile&quot; as the first line
         if (command.CommandText.StartsWith(Tag, StringComparison.Ordinal))
             command.CommandText += &quot; OPTION (RECOMPILE)&quot;;
-        return ValueTask.FromResult(result);
     }
 }
 
@@ -154,7 +180,7 @@ protected override void ConfigureConventions(ModelConfigurationBuilder configura
     <li>Add a <code>CommandCountingInterceptor</code> that counts commands per request (store the counter in an <code>AsyncLocal</code> or a scoped service) and logs a warning above 10. Use it to catch an N+1.</li>
     <li>Create the matching tenant-first and filtered indexes and check the plans.</li>
   </ol>
-  <details><summary>Soft-delete interceptor sketch</summary>
+  <details><summary>Soft-delete interceptor sketch (async hook shown; override the sync <code>SavingChanges</code> too)</summary>
 
 <pre><code class="language-csharp">public override ValueTask&lt;InterceptionResult&lt;int&gt;&gt; SavingChangesAsync(DbContextEventData e, InterceptionResult&lt;int&gt; r, CancellationToken ct = default)
 {

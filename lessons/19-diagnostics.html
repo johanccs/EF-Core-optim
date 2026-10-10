@@ -55,6 +55,9 @@
             logger.LogWarning(&quot;Slow query ({Ms} ms): {Sql}&quot;, eventData.Duration.TotalMilliseconds, command.CommandText);
         return ValueTask.FromResult(result);
     }
+
+    // Also override ReaderExecuted (sync), NonQueryExecuted(Async) and ScalarExecuted(Async)
+    // if you want SaveChanges, ExecuteUpdate and sync queries covered too.
 }
 
 builder.Services.AddSingleton&lt;SlowQueryInterceptor&gt;();
@@ -75,7 +78,7 @@ var q = db.Orders.TagWithCallSite().Where(o =&gt; o.Status == OrderStatus.Pendin
 
 <pre><code class="language-sql">-- OrdersController.GetRecent: dashboard list
 
-SELECT [o].[Id], ... FROM [Orders] AS [o] WHERE [o].[CustomerId] = @__id_0</code></pre>
+SELECT [o].[Id], ... FROM [Orders] AS [o] WHERE [o].[CustomerId] = @id</code></pre>
 <p>Tags appear in Query Store, Extended Events, <code>pg_stat_statements</code> and your APM tool.</p>
 
 <h2>3. Execution plans</h2>
@@ -103,8 +106,8 @@ SQL Server compiles a plan for the first parameter values it sees and reuses it.
 <p>EF Core publishes runtime metrics under the meter or event source name <code>Microsoft.EntityFrameworkCore</code>. EF Core 9+ uses <code>System.Diagnostics.Metrics</code>, and earlier versions use EventCounters. Watch a running process:</p>
 
 <pre><code class="language-bash">dotnet tool install --global dotnet-counters
-dotnet-counters monitor -n MyShop.Api --counters Microsoft.EntityFrameworkCore</code></pre>
-<p>Useful signals include active DbContexts, queries per second, SaveChanges per second, <b>compiled query cache hit rate</b> (it should be close to 100%, see Lesson 21), optimistic concurrency failures, and execution-strategy retries.</p>
+dotnet-counters monitor --counters Microsoft.EntityFrameworkCore -p &lt;PID&gt;</code></pre>
+<p>EF 9+ instruments include <code>microsoft.entityframeworkcore.active_dbcontexts</code>, <code>.queries</code>, <code>.savechanges</code>, <code>.compiled_query_cache_hits</code> / <code>.compiled_query_cache_misses</code>, <code>.optimistic_concurrency_failures</code> and <code>.execution_strategy_operation_failures</code>. The most telling signal is the <b>query cache hit ratio</b>, hits ÷ (hits + misses). After warm-up it should stay close to 100% (see Lesson 21). The legacy event counters show it directly as "Query Cache Hit Rate (%)". A steadily growing active DbContexts count suggests contexts aren't being disposed.</p>
 
 <h2>6. Distributed tracing with OpenTelemetry</h2>
 <p>Traces show each request with its database calls as child spans, which makes N+1 queries and slow statements obvious.</p>
@@ -127,7 +130,7 @@ dotnet-counters monitor -n MyShop.Api --counters Microsoft.EntityFrameworkCore</
     <li>Add <code>SlowQueryInterceptor</code> with a 50 ms threshold to the playground, and run a deliberately bad query (e.g. <code>Name.Contains</code> on 1M rows).</li>
     <li>Tag three queries with <code>TagWithCallSite()</code> and find them in the log output.</li>
     <li>Capture the actual execution plan for the slow query. Fix it, then capture the plan again.</li>
-    <li>Run <code>dotnet-counters monitor</code> while hitting an endpoint in a loop, and read the query cache hit rate.</li>
+    <li>Run <code>dotnet-counters monitor</code> while hitting an endpoint in a loop, and compare the query cache hits with misses.</li>
   </ol>
 </div>
 
@@ -158,7 +161,7 @@ dotnet-counters monitor -n MyShop.Api --counters Microsoft.EntityFrameworkCore</
 <div class="quiz" data-answer="a">
 <p class="q">Which EF metric tells you whether your queries are being recompiled too often?</p>
 <div class="opts">
-<button class="opt" type="button" data-opt="a">A. Compiled query cache hit rate</button>
+<button class="opt" type="button" data-opt="a">A. Compiled query cache hits vs misses</button>
 <button class="opt" type="button" data-opt="b">B. Active DbContexts</button>
 <button class="opt" type="button" data-opt="c">C. SaveChanges per second</button>
 <button class="opt" type="button" data-opt="d">D. Execution strategy retries</button>

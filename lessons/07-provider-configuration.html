@@ -71,7 +71,7 @@ options.UseAzureSql(connStr, sql =&gt; sql.EnableRetryOnFailure());</code></pre>
 </table>
 
 <div class="callout new"><span class="title">Newer SQL Server features</span>
-EF 10 adds support for the native <code>json</code> data type and the <code>vector</code> type (for AI similarity search) available in Azure SQL and SQL Server 2025. Whether EF uses them depends on the provider configuration and the compatibility level. Check the EF 10 release notes before enabling them on an existing database.</div>
+EF 10 supports the native <code>json</code> data type and the <code>vector</code> type (<code>SqlVector&lt;float&gt;</code> with <code>EF.Functions.VectorDistance</code>, for AI similarity search) on Azure SQL and SQL Server 2025. With <code>UseAzureSql</code>, or a compatibility level of <b>170 or higher</b>, EF 10 <b>defaults to the json type</b> for JSON-mapped data. Your next migration will convert existing <code>nvarchar</code> JSON columns to <code>json</code>. Opt out by setting the column type to <code>nvarchar(max)</code> explicitly, or by configuring a lower compatibility level.</div>
 
 <h2>PostgreSQL (Npgsql)</h2>
 
@@ -102,7 +102,7 @@ builder.Services.AddDbContext&lt;ShopContext&gt;(o =&gt; o
 <pre><code class="language-csharp">options.UseSqlite(&quot;Data Source=shop.db&quot;, sqlite =&gt; sqlite.CommandTimeout(30));</code></pre>
 <ul>
   <li><b>Limited ALTER TABLE</b>: many schema changes require rebuilding the table. EF's migrations do this automatically, but review them on large tables.</li>
-  <li><b>Type affinity</b>: SQLite has few native types. <code>decimal</code>, <code>DateTimeOffset</code> and <code>TimeSpan</code> are stored as text or integers, and some comparisons or orderings on them can't be translated. Plan value converters if you query on them.</li>
+  <li><b>Type affinity</b>: SQLite has few native types. <code>decimal</code>, <code>DateTimeOffset</code> and <code>TimeSpan</code> are stored as text or integers, so some operations on them can't be translated. EF 10 added <code>MIN</code>/<code>MAX</code>/<code>ORDER BY</code> support for <code>decimal</code> on SQLite. Check the provider's limitations page for your version, and plan value converters if you query on these types heavily.</li>
   <li><b>Concurrency</b>: one writer at a time. WAL journal mode (<code>PRAGMA journal_mode=WAL;</code>) lets readers proceed during writes. Check the current mode with <code>PRAGMA journal_mode;</code>.</li>
   <li><b>In-memory databases</b> (<code>Data Source=:memory:</code>) live only as long as their connection stays open. That matters for tests (Lesson 9).</li>
 </ul>

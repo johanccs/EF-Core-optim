@@ -127,6 +127,38 @@ try {
     await page.close();
   }
 
+  // ---------- 4b. sidebar resize and collapse ----------
+  console.log("\n4b. Sidebar resize and collapse");
+  {
+    const { page, errors } = await open("lessons/03-modeling-fundamentals.html", { viewport: { width: 1280, height: 800 } });
+    const navWidth = () => page.$eval("#sidebar", (n) => Math.round(n.getBoundingClientRect().width));
+    const box = await page.locator(".sidebar-resizer").boundingBox();
+    const y = box.y + 300;
+    await page.mouse.move(box.x + box.width / 2, y);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 150, y, { steps: 5 });
+    await page.mouse.up();
+    const dragged = await navWidth();
+    check(dragged > 400 && dragged <= 560, `dragging the border widens the menu (${dragged}px)`);
+    await page.reload();
+    check(Math.abs((await navWidth()) - dragged) <= 1, "the width is remembered after reload");
+    await page.click(".sidebar-toggle");
+    check(!(await page.isVisible("#sidebar")), "« hides the menu");
+    await page.reload();
+    check(!(await page.isVisible("#sidebar")) && (await page.textContent(".sidebar-toggle")) === "»", "hidden state is remembered and shows »");
+    await page.click(".sidebar-toggle");
+    check(await page.isVisible("#sidebar") && Math.abs((await navWidth()) - dragged) <= 1, "» shows the menu at its saved width");
+    await page.focus(".sidebar-resizer");
+    await page.keyboard.press("Home");
+    check((await navWidth()) === 200, "keyboard (Home) resizes the menu to its minimum");
+    await page.dblclick(".sidebar-resizer");
+    check((await navWidth()) === 300, "double-click resets the default width");
+    const pkg = JSON.parse(await readFile(path.join(ROOT, "package.json"), "utf8"));
+    check((await page.textContent(".topbar .version")) === "v" + pkg.version, `top bar shows the version from package.json (v${pkg.version})`);
+    check(errors.length === 0, "no page errors while resizing" + (errors.length ? ": " + errors.join(" | ") : ""));
+    await page.close();
+  }
+
   // ---------- 5. AI tutor with a mocked OpenAI API ----------
   console.log("\n5. AI tutor (mocked API)");
   {

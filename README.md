@@ -53,13 +53,13 @@ What the assistant does for accuracy:
 
 ## Publishing with GitHub Pages
 
-The site is served straight from the **`main` branch**, so every push to `main` publishes automatically. No workflow or separate publish step is needed, because the generated pages in `lessons/` are committed alongside their sources. Before you push:
+The site is served straight from the **`main` branch**: changes are pushed directly to `main`, and every push publishes automatically. There are no GitHub Actions workflows. The generated pages in `lessons/` are committed alongside their sources, so before you push, run the [quality checks](#quality-checks) and commit what `python3 build.py` regenerates.
 
-```bash
-python3 build.py      # regenerate lessons/ and the search index, then commit them
-```
+Pages setting: **Settings → Pages → Source: Deploy from a branch → `main` / (root)**.
 
-CI fails if you forget. Pages setting: **Settings → Pages → Source: Deploy from a branch → `main` / (root)**.
+### Versioning
+
+The version appears in the top bar of every page. On each release, bump `VERSION` in `assets/js/course.js` and `version` in `package.json` together (the tests check they match): patch for fixes, minor for new features or lessons, major for a course restructure.
 
 ## Development
 
@@ -72,10 +72,9 @@ assets/css/course.css    styles and design tokens (light/dark, WCAG AA contrast)
 assets/js/course.js      navigation, search, progress, quizzes, copy buttons
 assets/js/ai-assistant.js  right-click AI tutor (OpenAI Responses API)
 assets/js/search-index.js  generated full-text search index
-assets/js/theme-init.js  applies the saved theme before first paint
+assets/js/theme-init.js  applies the saved theme and lesson menu size before first paint
 build.py                 builds src/lessons → lessons + search index
 tests/run-tests.mjs      end-to-end, accessibility and AI tutor tests
-.github/workflows/       CI (ci.yml)
 ```
 
 ### Editing a lesson
@@ -91,7 +90,7 @@ npm run validate                     # HTML validation (html-validate)
 npm test                             # all pages, links, axe WCAG 2.1 AA (light and dark), search, progress, AI tutor (mocked), 404
 ```
 
-CI (`.github/workflows/ci.yml`) runs all of these on every push and pull request. It also fails if the generated files are out of date.
+There's no CI, so run these before every push. After `python3 build.py`, `git status` should show no changes under `lessons/` or `assets/js/search-index.js` that you haven't committed.
 
 ### Content review process
 

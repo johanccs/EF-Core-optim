@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -23,7 +23,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Project entities into DTOs, records and anonymous types.</li>
     <li>Pull related data through navigation properties inside a projection, without <code>Include</code>.</li>
@@ -149,9 +149,19 @@ EF can't see inside a C# method call or constructor body. If you write <code>.Se
   <li><b>Aggregates on empty sets</b>: <code>Sum</code> of an empty collection becomes 0 (EF uses <code>COALESCE</code>). <code>Max</code> or <code>Average</code> on empty sets need a cast to a nullable type: <code>o.Lines.Max(l =&gt; (decimal?)l.UnitPrice)</code>.</li>
 </ul>
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Project with <code>Select</code> to fetch only the columns the caller needs. This is often the biggest single read win.</li>
+    <li>Navigations inside projections become JOINs or subqueries automatically. <code>Include</code> isn't needed there.</li>
+    <li>Keep projections as expression trees. Opaque constructors and methods force full-entity fetches.</li>
+    <li>Projections enable covering indexes and remove tracking overhead.</li>
+  </ul>
+</div>
+
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Build a lean customer dashboard query</h4>
+  <h3 class="box-title">🛠 Build a lean customer dashboard query</h3>
   <p>Write one query that returns, for the 20 newest customers: Id, Name, number of orders, date of last order (nullable), and lifetime spend. Then print the SQL with <code>ToQueryString()</code>.</p>
   <details><summary>Show solution</summary>
 

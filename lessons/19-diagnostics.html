@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -23,7 +23,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Follow a repeatable workflow: measure, locate, explain, fix, verify.</li>
     <li>Tag queries so you can trace SQL back to C# code.</li>
@@ -84,12 +84,14 @@ SELECT [o].[Id], ... FROM [Orders] AS [o] WHERE [o].[CustomerId] = @id</code></p
 <h2>3. Execution plans</h2>
 <p>Copy the SQL (from logs or <code>ToQueryString()</code>), run it in SSMS or Azure Data Studio with <b>Include Actual Execution Plan</b> (or <code>EXPLAIN (ANALYZE, BUFFERS)</code> in PostgreSQL), and look for:</p>
 <table>
-  <tr><th>Plan smell</th><th>Likely cause</th><th>Fix</th></tr>
+  <thead><tr><th scope="col">Plan smell</th><th scope="col">Likely cause</th><th scope="col">Fix</th></tr></thead>
+  <tbody>
   <tr><td>Table/Clustered Index <b>Scan</b> on a big table</td><td>Missing index, or a non-sargable predicate</td><td>Lesson 14: index or rewrite the filter</td></tr>
   <tr><td><b>Key Lookup</b> executed thousands of times</td><td>Index doesn't cover the selected columns</td><td>Project fewer columns, or add <code>INCLUDE</code> columns</td></tr>
   <tr><td>Estimated rows ≪ actual rows</td><td>Stale statistics, parameter sniffing</td><td>Update statistics. See parameter sniffing below.</td></tr>
   <tr><td>Expensive <b>Sort</b> with a spill warning</td><td><code>ORDER BY</code> without a supporting index, or too small a memory grant</td><td>An index matching the ORDER BY</td></tr>
   <tr><td><code>CONVERT_IMPLICIT</code> warning</td><td>Parameter type doesn't match the column</td><td>Fix the model's column type or unicode setting</td></tr>
+  </tbody>
 </table>
 
 <div class="callout info"><span class="title">Parameter sniffing</span>
@@ -123,9 +125,19 @@ dotnet-counters monitor --counters Microsoft.EntityFrameworkCore -p &lt;PID&gt;<
         .AddOtlpExporter());</code></pre>
 <p>Send the data to .NET Aspire's dashboard locally, or to Jaeger, Grafana, Azure Monitor, Datadog or Honeycomb in production.</p>
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Follow a loop: measure, locate, explain, fix, verify.</li>
+    <li>Tag queries (<code>TagWith</code>, <code>TagWithCallSite</code>) so SQL can be traced back to code.</li>
+    <li>Read execution plans for scans, key lookups, bad estimates and implicit conversions.</li>
+    <li>Monitor EF metrics (cache hits and misses, active contexts) and use distributed tracing in production.</li>
+  </ul>
+</div>
+
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Build your toolkit</h4>
+  <h3 class="box-title">🛠 Build your toolkit</h3>
   <ol>
     <li>Add <code>SlowQueryInterceptor</code> with a 50 ms threshold to the playground, and run a deliberately bad query (e.g. <code>Name.Contains</code> on 1M rows).</li>
     <li>Tag three queries with <code>TagWithCallSite()</code> and find them in the log output.</li>

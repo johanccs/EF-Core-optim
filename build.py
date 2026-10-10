@@ -28,7 +28,7 @@ ROOT = pathlib.Path(__file__).resolve().parent
 SRC = ROOT / "src" / "lessons"
 OUT = ROOT / "lessons"
 
-PAGE = """<!doctype html>
+PAGE = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -57,6 +57,19 @@ PAGE = """<!doctype html>
 FENCE = re.compile(r"^```(\w+)?(?:[ \t]+label=\"([^\"]*)\")?[ \t]*\n(.*?)^```[ \t]*$", re.S | re.M)
 QUIZ = re.compile(r"^:::quiz[ \t]+([a-e])[ \t]*\n(.*?)^:::[ \t]*$", re.S | re.M)
 INLINE = re.compile(r"`([^`\n]+)`")
+
+
+TABLE = re.compile(r"<table>(.*?)</table>", re.S)
+
+
+def normalize_table(m):
+    """Accessible tables: header row in <thead> with scope="col", body rows in <tbody>."""
+    rows = re.findall(r"<tr>.*?</tr>", m.group(1), re.S)
+    if not rows or "<th>" not in rows[0]:
+        return m.group(0)
+    head = rows[0].replace("<th>", '<th scope="col">')
+    body = "\n  ".join(rows[1:])
+    return f"<table>\n  <thead>{head}</thead>\n  <tbody>\n  {body}\n  </tbody>\n</table>"
 
 
 def render(src: str) -> str:
@@ -88,6 +101,7 @@ def render(src: str) -> str:
 
     src = QUIZ.sub(quiz, src)
     src = INLINE.sub(lambda m: f"<code>{html.escape(m.group(1))}</code>", src)
+    src = TABLE.sub(normalize_table, src)
     src = re.sub(r"\x00(\d+)\x00", lambda m: blocks[int(m.group(1))], src)
     return src
 

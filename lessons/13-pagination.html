@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -23,7 +23,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Always limit result sets, and know why.</li>
     <li>Implement offset pagination correctly and understand its costs.</li>
@@ -110,11 +110,13 @@ Return the cursor to clients as an opaque string, for example Base64 of the JSON
 
 <h3>Offset vs keyset</h3>
 <table>
-  <tr><th></th><th>Offset (Skip/Take)</th><th>Keyset (seek)</th></tr>
+  <thead><tr><th scope="col"></th><th scope="col">Offset (Skip/Take)</th><th scope="col">Keyset (seek)</th></tr></thead>
+  <tbody>
   <tr><td>Deep page performance</td><td>Degrades linearly</td><td>Constant (with index)</td></tr>
   <tr><td>Jump to arbitrary page</td><td>✅ Yes</td><td>❌ Only next/previous</td></tr>
   <tr><td>Stable under inserts/deletes</td><td>❌ Drift</td><td>✅ Stable</td></tr>
   <tr><td>Best for</td><td>Admin grids with page numbers, small tables</td><td>Infinite scroll, APIs, exports, large tables</td></tr>
+  </tbody>
 </table>
 
 <h2>Total counts</h2>
@@ -129,9 +131,19 @@ Return the cursor to clients as an opaque string, for example Base64 of the JSON
 var total = await filtered.CountAsync();           // round trip 1
 var items = await filtered.OrderBy(o =&gt; o.Id).Skip(skip).Take(take).ToListAsync();  // round trip 2</code></pre>
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Never return unbounded result sets. Enforce a maximum page size on the server.</li>
+    <li>Offset paging cost grows with page depth and drifts when data changes.</li>
+    <li>Keyset paging stays constant-time with an index and a unique cursor (e.g. date + id).</li>
+    <li><code>COUNT(*)</code> for totals is a full scan of the filtered set. Make it optional or cache it.</li>
+  </ul>
+</div>
+
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Compare the two</h4>
+  <h3 class="box-title">🛠 Compare the two</h3>
   <ol>
     <li>Seed 1,000,000 orders (use <code>ExecuteSql</code> with a set-based INSERT, or batch inserts, from Lesson 16).</li>
     <li>Time offset pagination for pages 1, 1,000 and 40,000 (page size 25).</li>

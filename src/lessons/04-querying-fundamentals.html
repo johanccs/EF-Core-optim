@@ -9,7 +9,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Tell when a query executes, and avoid executing it twice.</li>
     <li>Keep filtering, sorting and aggregation in the database.</li>
@@ -134,9 +134,19 @@ await foreach (var order in db.Orders.AsNoTracking().Where(o => o.Status == Orde
 ```
 <p>Streaming keeps the connection open for the whole loop. Keep the loop body fast, and don't run other queries on the same context inside it unless MARS is enabled. Streaming with tracking still accumulates entities in the change tracker, so use <code>AsNoTracking()</code> (Lesson 10).</p>
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Queries are deferred: nothing runs until enumeration, and every enumeration runs the query again.</li>
+    <li>Stay on <code>IQueryable</code> until filtering, sorting and aggregation are expressed. <code>IEnumerable</code> switches to in-memory LINQ.</li>
+    <li>Untranslatable filters throw (EF Core 3+). Client evaluation is only allowed in the final projection.</li>
+    <li>Pick precise operators (<code>Any</code>, <code>Count</code>, <code>Sum</code>, <code>FindAsync</code>). Use async for scalability, and stream large results.</li>
+  </ul>
+</div>
+
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Spot the hidden queries</h4>
+  <h3 class="box-title">🛠 Spot the hidden queries</h3>
   <p>How many SQL queries does this code run, and how much data does it fetch? Rewrite it.</p>
 
 ```csharp

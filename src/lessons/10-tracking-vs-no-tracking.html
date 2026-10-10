@@ -9,7 +9,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Explain what tracking costs: memory, snapshots, identity resolution and <code>DetectChanges</code>.</li>
     <li>Use <code>AsNoTracking</code>, <code>AsNoTrackingWithIdentityResolution</code> and <code>AsTracking</code>.</li>
@@ -110,9 +110,19 @@ foreach (var batch in ids.Chunk(1000))
 }
 ```
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Tracking costs memory and CPU per row. Use it only when you'll modify and save the entities.</li>
+    <li><code>AsNoTracking</code> for read paths, <code>AsNoTrackingWithIdentityResolution</code> when shared references matter.</li>
+    <li>DTO projections are never tracked. A no-tracking default suits read-heavy services.</li>
+    <li>Update known rows with <code>Attach</code> plus property changes, and clear the change tracker between batches.</li>
+  </ul>
+</div>
+
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Measure it</h4>
+  <h3 class="box-title">🛠 Measure it</h3>
   <ol>
     <li>Load all 10,000 orders with <code>Include(o =&gt; o.Customer)</code> three ways: tracking, <code>AsNoTracking</code>, <code>AsNoTrackingWithIdentityResolution</code>.</li>
     <li>Time each with <code>Stopwatch</code> (run each a few times and discard the first) and check memory with <code>GC.GetAllocatedBytesForCurrentThread()</code>.</li>

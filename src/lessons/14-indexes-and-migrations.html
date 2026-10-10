@@ -9,7 +9,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Define unique, composite, filtered, descending and covering indexes with the Fluent API.</li>
     <li>Design indexes from your actual query patterns.</li>
@@ -112,9 +112,19 @@ b.HasIndex(o => o.PlacedUtc).IsCreatedOnline();      // SQL Server: WITH (ONLINE
 ```
 <p>For risky changes, use custom SQL in the migration with <code>migrationBuilder.Sql(...)</code>, and split schema changes into expand and contract phases: add a column, backfill it, switch the code over, then drop the old column.</p>
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Design indexes from your queries: equality columns first, then range or sort columns.</li>
+    <li>Use covering (<code>INCLUDE</code>), filtered and descending indexes where queries allow.</li>
+    <li>Avoid non-sargable predicates: functions on columns, leading wildcards, type mismatches.</li>
+    <li>Ship schema changes as reviewed scripts or bundles, not <code>Migrate()</code> at production startup.</li>
+  </ul>
+</div>
+
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Index for your queries</h4>
+  <h3 class="box-title">🛠 Index for your queries</h3>
   <p>Design the indexes for these three queries, add them to the model, and generate a migration:</p>
   <ol>
     <li>A customer's orders, newest first: <code>Where(o =&gt; o.CustomerId == id).OrderByDescending(o =&gt; o.PlacedUtc)</code></li>

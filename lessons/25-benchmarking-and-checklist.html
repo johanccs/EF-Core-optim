@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -23,7 +23,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Write reliable micro-benchmarks for EF Core with BenchmarkDotNet.</li>
     <li>Load-test endpoints and interpret the results.</li>
@@ -166,6 +166,11 @@ public void Product_list_query_does_not_select_description()
   <li>☐ Retry-on-failure is enabled for cloud databases, and manual transactions run inside the execution strategy.</li>
   <li>☐ Performance warnings (multiple collection include, etc.) are configured to throw in development.</li>
   <li>☐ DbContext pooling is considered for high-throughput services, and the context has no stray state.</li>
+  <li>☐ Database settings are bound to validated options with <code>ValidateOnStart</code>. Misconfiguration fails the deploy, not the first request.</li>
+  <li>☐ No credentials in source control. Secrets come from a vault or environment, and managed identity is used where available.</li>
+  <li>☐ Connection strings set <code>Application Name</code> and keep <code>Encrypt</code> on, and there's no <code>TrustServerCertificate</code> in production.</li>
+  <li>☐ Provider settings match the server: compatibility level / PostgreSQL version, command timeout, UTC timestamps.</li>
+  <li>☐ A database readiness health check exists, and liveness doesn't depend on the database.</li>
 </ul>
 
 <h3>Model</h3>
@@ -205,9 +210,19 @@ public void Product_list_query_does_not_select_description()
   <li>☐ Warm-up runs before readiness. Benchmarks and query-count tests run in CI.</li>
 </ul>
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Benchmark with BenchmarkDotNet, in Release, against the real provider, with realistic data.</li>
+    <li>Load test for p95/p99 latency and throughput while watching the database.</li>
+    <li>Lock in fixes with tests: command counts, generated-SQL assertions.</li>
+    <li>Use the checklist to audit configuration, model, queries, writes and operations.</li>
+  </ul>
+</div>
+
 <h2>🏆 Capstone project</h2>
 <div class="exercise">
-  <h4>Optimize "SlowShop"</h4>
+  <h3 class="box-title">Optimize "SlowShop"</h3>
   <p>Build, or take from your playground, an API with these deliberately slow endpoints, then apply the course:</p>
   <ol>
     <li><b>GET /products?page=N</b>: loads all products with <code>Include(Category)</code>, pages in memory, and returns entities including Description.<br><i>Target: projection, keyset paging, covering index.</i></li>

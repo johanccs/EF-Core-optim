@@ -9,7 +9,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Use eager (<code>Include</code>/<code>ThenInclude</code>), explicit and lazy loading correctly.</li>
     <li>Recognize and fix N+1 query patterns.</li>
@@ -153,9 +153,19 @@ If you do use it, turn on detection: EF logs <code>CoreEventId.LazyLoadOnDispose
   <li><b>Integration tests</b>: assert the number of commands executed by an endpoint.</li>
 </ul>
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>N+1 means one query per item. It's the most common ORM performance bug.</li>
+    <li>Use projections for reads, <code>Include</code> (optionally filtered) to load graphs you'll modify, and explicit loading for single entities.</li>
+    <li>Lazy loading hides queries behind property access. Avoid it, or detect it in tests.</li>
+    <li>Detect N+1 with logs, traces, or a command-counting test.</li>
+  </ul>
+</div>
+
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Kill the N+1</h4>
+  <h3 class="box-title">🛠 Kill the N+1</h3>
   <p>This code builds an "invoice" view. Count the queries, then rewrite it as one query.</p>
 
 ```csharp

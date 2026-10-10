@@ -9,7 +9,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Explain cartesian explosion and data duplication in single queries.</li>
     <li>Use <code>AsSplitQuery()</code> and <code>AsSingleQuery()</code>, and set a global default.</li>
@@ -96,9 +96,19 @@ var order = await db.Orders.Include(o => o.Customer).Include(o => o.Lines)
 <div class="callout tip"><span class="title">How to decide</span>
 Don't choose by rule. <b>Measure both</b> with realistic data and realistic network latency. A split query trades data volume for round trips. With 0.2 ms local latency, splitting almost always wins for multiple collections. With a 20 ms cross-region link, the extra round trips may cost more than the duplicated data. Often the best answer is neither: <b>project only what you need</b> (Lesson 11), so the duplication is a few narrow columns.</div>
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Multiple collection includes in one query multiply rows (cartesian explosion).</li>
+    <li><code>AsSplitQuery</code> trades extra round trips for no duplication. Measure both with realistic latency.</li>
+    <li>Split queries aren't one atomic snapshot. EF 10 keeps their ordering consistent automatically.</li>
+    <li>Often the best fix is a narrow projection instead of either strategy.</li>
+  </ul>
+</div>
+
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Watch the rows multiply</h4>
+  <h3 class="box-title">🛠 Watch the rows multiply</h3>
   <ol>
     <li>Add an <code>Address</code> entity (Id, CustomerId, City) and seed 5 addresses per customer.</li>
     <li>Run the double-include query for 100 customers as a single query. Log how many rows come back: run the SQL from <code>ToQueryString()</code> in your SQL tool.</li>

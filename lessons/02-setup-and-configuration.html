@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -23,7 +23,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Register a DbContext in ASP.NET Core with the right lifetime.</li>
     <li>Configure provider options: connection strings, timeouts, retries.</li>
@@ -116,11 +116,13 @@ Console.WriteLine(query.ToQueryString());   // great in unit tests and in the de
 
 <h2>Diagnostic options</h2>
 <table>
-  <tr><th>Option</th><th>What it does</th><th>Production?</th></tr>
+  <thead><tr><th scope="col">Option</th><th scope="col">What it does</th><th scope="col">Production?</th></tr></thead>
+  <tbody>
   <tr><td><code>EnableSensitiveDataLogging()</code></td><td>Includes parameter values and entity key values in logs and exception messages. (EF 10 also redacts constants it inlines into SQL unless this is on.)</td><td>❌ No. It leaks PII and secrets.</td></tr>
   <tr><td><code>EnableDetailedErrors()</code></td><td>Better errors when materialization fails (e.g. a null in a non-nullable column). Small overhead.</td><td>⚠ Development only</td></tr>
   <tr><td><code>LogTo(...)</code></td><td>Simple logging to a delegate.</td><td>⚠ Prefer ILogger</td></tr>
   <tr><td><code>ConfigureWarnings(...)</code></td><td>Turns specific EF warnings into errors, or ignores them.</td><td>✅ Yes</td></tr>
+  </tbody>
 </table>
 
 <pre><code class="language-csharp">builder.Services.AddDbContext&lt;ShopContext&gt;(options =&gt;
@@ -149,9 +151,19 @@ Connection pooling (ADO.NET) reuses database connections. DbContext pooling (EF,
 <div class="callout new"><span class="title">Going deeper</span>
 This lesson covers just enough configuration to get started. <b>Level 2 · Configuration</b> covers the rest in depth: the options pipeline and design-time tools (Lesson 5), connection strings, secrets and pooling (Lesson 6), provider-specific settings (Lesson 7), model configuration at scale (Lesson 8), and environments and testing (Lesson 9).</div>
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Register the context with <code>AddDbContext</code> (scoped). Use a factory for singletons and background work.</li>
+    <li>Always know your SQL: <code>LogTo</code>, ILogger categories, and <code>ToQueryString()</code>.</li>
+    <li><code>EnableSensitiveDataLogging</code> and <code>EnableDetailedErrors</code> are for development only.</li>
+    <li>Turn EF performance warnings into exceptions during development.</li>
+  </ul>
+</div>
+
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Make EF talk</h4>
+  <h3 class="box-title">🛠 Make EF talk</h3>
   <ol>
     <li>Add <code>LogTo</code> filtered to <code>DbLoggerCategory.Database.Command</code> in your playground.</li>
     <li>Run <code>db.Customers.FirstAsync()</code>. What warning appears, and what SQL is generated?</li>

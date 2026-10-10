@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -23,7 +23,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Explain EF Core's conventions and how to override them.</li>
     <li>Choose between data annotations and the Fluent API, and organize configuration with <code>IEntityTypeConfiguration&lt;T&gt;</code>.</li>
@@ -35,13 +35,15 @@
 <h2>Conventions: what you get for free</h2>
 <p>EF Core builds the model by convention. A few defaults matter for performance:</p>
 <table>
-  <tr><th>Convention</th><th>Default</th><th>Performance consequence</th></tr>
+  <thead><tr><th scope="col">Convention</th><th scope="col">Default</th><th scope="col">Performance consequence</th></tr></thead>
+  <tbody>
   <tr><td>Property named <code>Id</code> or <code>&lt;Type&gt;Id</code></td><td>Primary key. Integers use <code>IDENTITY</code> on SQL Server.</td><td>Fine. Lesson 16 covers HiLo and sequences for batching.</td></tr>
   <tr><td><code>string</code> properties</td><td><code>nvarchar(max)</code> on SQL Server</td><td>⚠ Can't be used as an index key. Larger memory grants. Worse plans.</td></tr>
   <tr><td><code>decimal</code> properties</td><td><code>decimal(18,2)</code>, with a warning</td><td>⚠ May silently truncate values. Configure precision explicitly.</td></tr>
   <tr><td>Foreign key properties</td><td><b>An index is created automatically</b></td><td>✅ Joins and FK lookups are indexed.</td></tr>
   <tr><td>Enums</td><td>Stored as <code>int</code></td><td>✅ Compact. Strings are more readable but larger.</td></tr>
   <tr><td>Nullable reference types enabled</td><td><code>string</code> → <code>NOT NULL</code>, <code>string?</code> → <code>NULL</code></td><td>✅ Accurate nullability lets EF generate simpler SQL.</td></tr>
+  </tbody>
 </table>
 
 <h2>Data annotations vs Fluent API</h2>
@@ -143,9 +145,19 @@ Having <code>CustomerId</code> as a real property, not just the <code>Customer</
   <li><b>Natural keys</b> (e.g. <code>Sku</code>): usually better as a unique index than as the primary key, because they can change and are wider.</li>
 </ul>
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Conventions are a starting point, not a design. Check what EF generated with <code>Model.ToDebugString()</code>.</li>
+    <li>Always bound string lengths, set decimal precision, and use <code>IsUnicode(false)</code> for ASCII data.</li>
+    <li>EF indexes foreign keys automatically. Every other index is your job.</li>
+    <li>Expose foreign-key properties so you can set relationships without loading the related entity.</li>
+  </ul>
+</div>
+
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Tighten the model</h4>
+  <h3 class="box-title">🛠 Tighten the model</h3>
   <ol>
     <li>Move each entity's configuration into an <code>IEntityTypeConfiguration&lt;T&gt;</code> class.</li>
     <li>Add <code>ConfigureConventions</code> with sensible string, decimal and DateTime defaults.</li>

@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -23,7 +23,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Write command, SaveChanges and materialization interceptors.</li>
     <li>Use global query filters for soft delete and tenancy, including EF 10 named filters.</li>
@@ -35,13 +35,15 @@
 <h2>Interceptors</h2>
 <p>Interceptors let you observe and modify EF operations. The main kinds:</p>
 <table>
-  <tr><th>Interface / base class</th><th>Intercepts</th><th>Typical use</th></tr>
+  <thead><tr><th scope="col">Interface / base class</th><th scope="col">Intercepts</th><th scope="col">Typical use</th></tr></thead>
+  <tbody>
   <tr><td><code>DbCommandInterceptor</code></td><td>Command creation and execution</td><td>Slow-query logging, query hints, command counting</td></tr>
   <tr><td><code>DbConnectionInterceptor</code></td><td>Opening and closing connections</td><td>Setting session context (e.g. <code>SESSION_CONTEXT</code> for row-level security), access tokens</td></tr>
   <tr><td><code>DbTransactionInterceptor</code></td><td>Transactions</td><td>Diagnostics</td></tr>
   <tr><td><code>SaveChangesInterceptor</code></td><td>SaveChanges</td><td>Audit fields, domain events, outbox</td></tr>
   <tr><td><code>IMaterializationInterceptor</code></td><td>Entity instance creation</td><td>Injecting services, post-load initialization</td></tr>
   <tr><td><code>IQueryExpressionInterceptor</code></td><td>The LINQ expression tree before compilation</td><td>Rewriting queries, enforcing rules</td></tr>
+  </tbody>
 </table>
 
 <div class="callout warn"><span class="title">Interceptors are on the hot path</span>
@@ -171,9 +173,19 @@ protected override void ConfigureConventions(ModelConfigurationBuilder configura
 }</code></pre>
 <p>You can also <b>remove</b> conventions you don't want. For example, <code>configurationBuilder.Conventions.Remove(typeof(ForeignKeyIndexConvention));</code> stops automatic FK indexes when you manage all indexes yourself. Do this only deliberately.</p>
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Interceptors centralize cross-cutting logic but run on every operation. Keep them cheap, and override both sync and async hooks.</li>
+    <li>Global query filters implement soft delete and tenancy. EF 10 adds named filters you can disable individually.</li>
+    <li>Index for your filters: tenant column first, filtered indexes for live rows.</li>
+    <li>Custom conventions encode team rules once, model-wide.</li>
+  </ul>
+</div>
+
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Production-grade cross-cutting concerns</h4>
+  <h3 class="box-title">🛠 Production-grade cross-cutting concerns</h3>
   <ol>
     <li>Add <code>IsDeleted</code> and <code>TenantId</code> to <code>Order</code> and <code>Customer</code>, with named filters (EF 10) or a combined filter (EF 8/9).</li>
     <li>Override delete behaviour: in a <code>SaveChangesInterceptor</code>, turn <code>EntityState.Deleted</code> into a modification that sets <code>IsDeleted = true</code>.</li>

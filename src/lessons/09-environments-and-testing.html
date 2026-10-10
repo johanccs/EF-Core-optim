@@ -9,7 +9,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Layer configuration by environment, and know which EF settings belong where.</li>
     <li>Validate configuration at startup and expose database health checks.</li>
@@ -137,9 +137,19 @@ connection.Dispose();                                // database disappears
 <div class="callout tip"><span class="title">Test the configuration itself</span>
 Add a cheap test that builds the real host with production-like settings (minus secrets) and resolves <code>ShopContext</code>. Then assert on <code>db.Model</code> or <code>db.Database.ProviderName</code>. It catches broken DI registrations, invalid options and model validation errors on every build.</div>
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Layer configuration per environment. Debug features on in dev and test, off in production.</li>
+    <li>Validate options at startup and expose a database readiness check (not a liveness check).</li>
+    <li>Test data access against the real database engine (Testcontainers). Avoid the InMemory provider.</li>
+    <li>When replacing the context in integration tests on EF 9/10, remove all of AddDbContext's registrations first.</li>
+  </ul>
+</div>
+
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Environment-proof setup</h4>
+  <h3 class="box-title">🛠 Environment-proof setup</h3>
   <ol>
     <li>Implement the environment-specific <code>AddDbContext</code> above. Start the app as <code>Development</code> and as <code>Production</code>, and compare the logs.</li>
     <li>Add <code>AddDbContextCheck</code> with ready and live endpoints. Stop the database and watch <code>/health/ready</code> turn unhealthy while <code>/health/live</code> stays healthy.</li>

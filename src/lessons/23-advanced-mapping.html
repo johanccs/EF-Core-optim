@@ -9,7 +9,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Choose between TPH, TPT and TPC inheritance based on query patterns.</li>
     <li>Use complex types, owned types and JSON columns appropriately.</li>
@@ -129,9 +129,19 @@ var tagged = await db.Products.Where(p => p.Tags.Contains("sale")).ToListAsync()
 ```
 <p>It's convenient, but every such filter shreds the JSON for each row, so it can't use an index. If you filter by tags frequently and the table is large, model a proper <code>ProductTag</code> table with an index. On PostgreSQL, native arrays with a GIN index are an efficient alternative.</p>
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>TPH is generally fastest. TPC suits leaf-type queries. Avoid TPT unless a schema forces it.</li>
+    <li>Complex types (value semantics) are now the recommended way to map value objects and JSON.</li>
+    <li>JSON columns save joins, but predicates inside them need explicit indexing.</li>
+    <li>Table splitting and converters change SQL. Check ordering and indexability on converted columns.</li>
+  </ul>
+</div>
+
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Same hierarchy, three strategies</h4>
+  <h3 class="box-title">🛠 Same hierarchy, three strategies</h3>
   <ol>
     <li>Model <code>Payment</code> with 3 subtypes, each with 2 extra properties. Seed 100k payments.</li>
     <li>For each of TPH, TPT and TPC, inspect the SQL and time: (a) all payments for an order, (b) all card payments last month, (c) inserting 10k payments.</li>

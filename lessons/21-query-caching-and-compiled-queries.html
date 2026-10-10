@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -23,7 +23,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Explain the two caches involved: EF's query cache and the database plan cache.</li>
     <li>Avoid query cache pollution from constants in dynamically built expressions.</li>
@@ -99,10 +99,12 @@ The <code>Microsoft.EntityFrameworkCore</code> metrics (Lesson 19) report compil
 var orders = await db.Orders.Where(o =&gt; ids.Contains(o.Id)).ToListAsync();</code></pre>
 <p>Translation has changed across versions, and it matters for both caches:</p>
 <table>
-  <tr><th>Version</th><th>Default SQL</th><th>Notes</th></tr>
+  <thead><tr><th scope="col">Version</th><th scope="col">Default SQL</th><th scope="col">Notes</th></tr></thead>
+  <tbody>
   <tr><td>EF Core ≤ 7</td><td><code>WHERE [Id] IN (1, 7, 42, 99)</code></td><td>Constants: a different SQL text for every distinct list, which pollutes the plan cache.</td></tr>
   <tr><td>EF Core 8–9</td><td><code>WHERE [Id] IN (SELECT [value] FROM OPENJSON(@__ids_0) ...)</code></td><td>One JSON parameter and one SQL text, but the optimizer can't see how many values there are, which sometimes produces poor plans.</td></tr>
   <tr><td><b>EF Core 10</b></td><td><code>WHERE [Id] IN (@ids1, @ids2, @ids3, @ids4)</code></td><td>Multiple scalar parameters. The optimizer gets cardinality information, and EF pads the parameter count to limit the number of distinct SQL shapes.</td></tr>
+  </tbody>
 </table>
 <p>You can override the default globally or per query:</p>
 
@@ -147,9 +149,19 @@ await foreach (var o in ShopQueries.OrdersForCustomer(db, 7)) { /* ... */ }</cod
 if (filter.CategoryId is int c) q = q.Where(p =&gt; p.CategoryId == c);      // parameter: good
 if (filter.MaxPrice is decimal m) q = q.Where(p =&gt; p.Price &lt;= m);         // parameter: good</code></pre>
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>EF caches compiled queries by shape, and the database caches plans by SQL text. Parameterize to benefit from both.</li>
+    <li>Constants in dynamically built expressions pollute both caches. Use closures, or <code>EF.Parameter</code>.</li>
+    <li>EF 10 translates <code>Contains</code> over collections into padded multiple parameters. The mode is configurable.</li>
+    <li>Compiled queries save microseconds per execution. Use them only on measured hot paths.</li>
+  </ul>
+</div>
+
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Find the cache polluter</h4>
+  <h3 class="box-title">🛠 Find the cache polluter</h3>
   <ol>
     <li>Write a generic <code>WhereEquals&lt;T&gt;(string property, object value)</code> helper using <code>Expression.Constant</code>. Call it in a loop with 500 different values and watch the log: how many distinct SQL texts do you get?</li>
     <li>Fix it using the closure-holder technique and confirm there's one SQL text.</li>

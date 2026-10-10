@@ -682,7 +682,9 @@
     view.meta.innerHTML = "<span>" + bits.join(" · ") + "</span>" + notes.map(function (n) { return "<span>⚠ " + esc(n) + "</span>"; }).join("") +
       '<button type="button" data-copy>Copy answer</button>';
     view.meta.querySelector("[data-copy]").addEventListener("click", function (e) {
-      if (navigator.clipboard) navigator.clipboard.writeText(text).then(function () { e.target.textContent = "Copied"; setTimeout(function () { e.target.textContent = "Copy answer"; }, 1400); });
+      var copy = window.EFCourseCopy || function (t) { return navigator.clipboard.writeText(t); };
+      copy(text).then(function () { e.target.textContent = "Copied"; setTimeout(function () { e.target.textContent = "Copy answer"; }, 1400); },
+                      function () { e.target.textContent = "Copy failed"; });
     });
   }
 

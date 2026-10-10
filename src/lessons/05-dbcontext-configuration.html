@@ -9,7 +9,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Explain how <code>DbContextOptions&lt;T&gt;</code> is built and in what order configuration runs.</li>
     <li>Pick between <code>AddDbContext</code>, <code>OnConfiguring</code>, <code>AddDbContextFactory</code> and manual construction.</li>
@@ -174,9 +174,19 @@ public class ShopContextDesignTimeFactory : IDesignTimeDbContextFactory<ShopCont
   <tr><td>The DbContextOptions passed to the X constructor must be a DbContextOptions&lt;X&gt;</td><td>Multiple contexts using the non-generic options type.</td></tr>
 </table>
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Configuration flows from the outside (DI or options), then <code>OnConfiguring</code>, which runs last. Guard fallbacks with <code>IsConfigured</code>.</li>
+    <li>Bind database settings to a validated options class and use <code>ValidateOnStart</code> to fail fast.</li>
+    <li>Each context in a multi-context app takes <code>DbContextOptions&lt;TContext&gt;</code> and can have its own schema and migrations history.</li>
+    <li><code>IDesignTimeDbContextFactory</code> makes the <code>dotnet ef</code> tools independent of your app's startup.</li>
+  </ul>
+</div>
+
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Production-grade configuration</h4>
+  <h3 class="box-title">🛠 Production-grade configuration</h3>
   <ol>
     <li>Create <code>DatabaseOptions</code>, bind it with <code>ValidateOnStart</code>, and configure <code>ShopContext</code> from it.</li>
     <li>Delete the <code>CommandTimeoutSeconds</code> value, set it to <code>0</code>, and start the app. Confirm it refuses to start, with a clear message.</li>

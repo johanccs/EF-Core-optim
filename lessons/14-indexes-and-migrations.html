@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -23,7 +23,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Define unique, composite, filtered, descending and covering indexes with the Fluent API.</li>
     <li>Design indexes from your actual query patterns.</li>
@@ -86,12 +86,14 @@ db.Products.Where(p =&gt; p.CategoryId == id).Select(p =&gt; new { p.Id, p.Name,
 
 <h2>LINQ that defeats indexes</h2>
 <table>
-  <tr><th>Pattern</th><th>SQL</th><th>Why it hurts</th><th>Alternative</th></tr>
+  <thead><tr><th scope="col">Pattern</th><th scope="col">SQL</th><th scope="col">Why it hurts</th><th scope="col">Alternative</th></tr></thead>
+  <tbody>
   <tr><td><code>c.Name.Contains(x)</code></td><td><code>LIKE '%x%'</code></td><td>Leading wildcard means a full scan</td><td><code>StartsWith</code> → <code>LIKE 'x%'</code>, or full-text search</td></tr>
   <tr><td><code>o.PlacedUtc.Year == 2025</code></td><td><code>DATEPART(year, …) = 2025</code></td><td>A function on the column isn't sargable</td><td><code>o.PlacedUtc &gt;= new DateTime(2025,1,1) &amp;&amp; o.PlacedUtc &lt; new DateTime(2026,1,1)</code></td></tr>
   <tr><td><code>c.Email.ToLower() == x</code></td><td><code>LOWER([Email]) = @x</code></td><td>Function on the column</td><td>Use a case-insensitive collation (the SQL Server default) and compare directly</td></tr>
   <tr><td>Type mismatch (varchar column, nvarchar param)</td><td><code>CONVERT_IMPLICIT</code></td><td>Index scan instead of seek</td><td>Configure <code>IsUnicode(false)</code> in the model (Lesson 3)</td></tr>
   <tr><td><code>a == x || b == y</code></td><td><code>OR</code> across columns</td><td>Often a scan</td><td>Separate indexes, or <code>Concat</code>/<code>Union</code> of two queries</td></tr>
+  </tbody>
 </table>
 
 <div class="callout tip"><span class="title">Let the database tell you</span>
@@ -106,10 +108,12 @@ dotnet ef migrations remove            # undo last (if not applied)</code></pre>
 
 <h3>Deploying migrations safely</h3>
 <table>
-  <tr><th>Approach</th><th>How</th><th>Production?</th></tr>
+  <thead><tr><th scope="col">Approach</th><th scope="col">How</th><th scope="col">Production?</th></tr></thead>
+  <tbody>
   <tr><td><code>context.Database.Migrate()</code> at startup</td><td>The app migrates itself on boot</td><td>⚠ Not recommended for production: the app needs DDL permissions, startup gets slower, and a failed migration takes the app down. EF 9+ takes a lock so instances don't migrate concurrently, but the other risks remain. OK for dev and simple apps.</td></tr>
   <tr><td><b>Idempotent SQL script</b></td><td><code>dotnet ef migrations script --idempotent -o migrate.sql</code></td><td>✅ Reviewable by a DBA and runnable from CI/CD</td></tr>
   <tr><td><b>Migration bundle</b></td><td><code>dotnet ef migrations bundle --self-contained -r linux-x64</code> → <code>./efbundle --connection "..."</code></td><td>✅ A single executable, ideal for pipelines</td></tr>
+  </tbody>
 </table>
 
 <h3>Large-table operations</h3>
@@ -118,9 +122,19 @@ dotnet ef migrations remove            # undo last (if not applied)</code></pre>
 <pre><code class="language-csharp">b.HasIndex(o =&gt; o.PlacedUtc).IsCreatedOnline();      // SQL Server: WITH (ONLINE = ON)</code></pre>
 <p>For risky changes, use custom SQL in the migration with <code>migrationBuilder.Sql(...)</code>, and split schema changes into expand and contract phases: add a column, backfill it, switch the code over, then drop the old column.</p>
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Design indexes from your queries: equality columns first, then range or sort columns.</li>
+    <li>Use covering (<code>INCLUDE</code>), filtered and descending indexes where queries allow.</li>
+    <li>Avoid non-sargable predicates: functions on columns, leading wildcards, type mismatches.</li>
+    <li>Ship schema changes as reviewed scripts or bundles, not <code>Migrate()</code> at production startup.</li>
+  </ul>
+</div>
+
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Index for your queries</h4>
+  <h3 class="box-title">🛠 Index for your queries</h3>
   <p>Design the indexes for these three queries, add them to the model, and generate a migration:</p>
   <ol>
     <li>A customer's orders, newest first: <code>Where(o =&gt; o.CustomerId == id).OrderByDescending(o =&gt; o.PlacedUtc)</code></li>

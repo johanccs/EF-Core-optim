@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -23,7 +23,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Tell when a query executes, and avoid executing it twice.</li>
     <li>Keep filtering, sorting and aggregation in the database.</li>
@@ -103,13 +103,15 @@ If you really must evaluate something in memory, make it obvious: filter as much
 
 <h2>Picking the right operator</h2>
 <table>
-  <tr><th>You want…</th><th>Use</th><th>Avoid</th></tr>
+  <thead><tr><th scope="col">You want…</th><th scope="col">Use</th><th scope="col">Avoid</th></tr></thead>
+  <tbody>
   <tr><td>Does any row exist?</td><td><code>AnyAsync(predicate)</code> → <code>EXISTS</code></td><td><code>CountAsync() &gt; 0</code>, or <code>ToList().Any()</code></td></tr>
   <tr><td>Exactly one row by unique key</td><td><code>SingleOrDefaultAsync</code> (fetches TOP 2 to verify) or <code>FirstOrDefaultAsync</code> (TOP 1)</td><td><code>Where(...).ToList().FirstOrDefault()</code></td></tr>
   <tr><td>Entity by primary key</td><td><code>FindAsync(id)</code>: checks the change tracker first and may skip the database entirely</td><td>Nothing wrong with <code>FirstOrDefaultAsync</code>, but it always queries</td></tr>
   <tr><td>Aggregates</td><td><code>SumAsync</code>, <code>MaxAsync</code>, <code>GroupBy(...).Select(g =&gt; new { g.Key, Count = g.Count() })</code></td><td>Loading rows and aggregating in memory</td></tr>
   <tr><td>Left outer join</td><td><code>LeftJoin(...)</code> (new LINQ operator in .NET 10, translated by EF 10). Navigation properties are usually simpler.</td><td>The <code>GroupJoin</code> + <code>SelectMany</code> + <code>DefaultIfEmpty</code> pattern (it still works, but it's hard to read)</td></tr>
   <tr><td>Count of children</td><td><code>Select(c =&gt; new { c.Id, OrderCount = c.Orders.Count() })</code></td><td><code>Include(c =&gt; c.Orders)</code> then <code>.Orders.Count</code></td></tr>
+  </tbody>
 </table>
 
 <h2>Async: scalability, not speed</h2>
@@ -130,9 +132,19 @@ With <code>Microsoft.Data.SqlClient</code>, reading very large text or binary co
 }</code></pre>
 <p>Streaming keeps the connection open for the whole loop. Keep the loop body fast, and don't run other queries on the same context inside it unless MARS is enabled. Streaming with tracking still accumulates entities in the change tracker, so use <code>AsNoTracking()</code> (Lesson 10).</p>
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Queries are deferred: nothing runs until enumeration, and every enumeration runs the query again.</li>
+    <li>Stay on <code>IQueryable</code> until filtering, sorting and aggregation are expressed. <code>IEnumerable</code> switches to in-memory LINQ.</li>
+    <li>Untranslatable filters throw (EF Core 3+). Client evaluation is only allowed in the final projection.</li>
+    <li>Pick precise operators (<code>Any</code>, <code>Count</code>, <code>Sum</code>, <code>FindAsync</code>). Use async for scalability, and stream large results.</li>
+  </ul>
+</div>
+
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Spot the hidden queries</h4>
+  <h3 class="box-title">🛠 Spot the hidden queries</h3>
   <p>How many SQL queries does this code run, and how much data does it fetch? Rewrite it.</p>
 
 <pre><code class="language-csharp">public List&lt;Customer&gt; GetCustomers() =&gt; db.Customers.ToList();

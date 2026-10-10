@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -23,7 +23,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Enable pooling with <code>AddDbContextPool</code> and <code>AddPooledDbContextFactory</code>.</li>
     <li>Explain what is and isn't reset when a context returns to the pool.</li>
@@ -111,9 +111,19 @@ builder.Services.AddScoped(sp =&gt; sp.GetRequiredService&lt;TenantContextFactor
 <div class="callout info"><span class="title">Reminder: two different pools</span>
 DbContext pooling reuses .NET objects. ADO.NET connection pooling reuses database connections, which is the bigger win, and it's already on. A pooled context still opens and closes connections per operation through the connection pool.</div>
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Pooling reuses DbContext instances. It saves a fixed cost per request, which matters at high throughput.</li>
+    <li>EF resets its own state, but not your custom fields. Set per-request state on every rent.</li>
+    <li>Don't inject scoped services into a pooled context. Use a factory wrapper.</li>
+    <li>Measure before enabling. Connection pooling is the bigger win, and it's always on.</li>
+  </ul>
+</div>
+
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Pool safely</h4>
+  <h3 class="box-title">🛠 Pool safely</h3>
   <ol>
     <li>Switch the playground API to <code>AddDbContextPool</code>. Use a load tool (<code>bombardier</code>, <code>k6</code> or <code>NBomber</code>) against a simple GET by id, and compare requests per second and allocations before and after.</li>
     <li>Add a <code>TenantId</code> field and set it in the controller only when a header is present. Show that a pooled context can carry the previous value. Then fix it with the factory wrapper.</li>

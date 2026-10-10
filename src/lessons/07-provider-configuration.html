@@ -9,7 +9,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Use the provider options builder (<code>UseSqlServer(conn, sql =&gt; …)</code>) confidently.</li>
     <li>Configure SQL Server and Azure SQL: compatibility level, timeouts, batching, retries, migrations.</li>
@@ -109,9 +109,19 @@ options.UseSqlite("Data Source=shop.db", sqlite => sqlite.CommandTimeout(30));
   <li>Test against <b>every</b> provider you ship. Translation differences are real.</li>
 </ul>
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Provider options (<code>UseSqlServer(conn, sql =&gt; …)</code>) change the generated SQL and runtime behaviour. Configure them deliberately.</li>
+    <li>Match <code>UseCompatibilityLevel</code> / <code>SetPostgresVersion</code> to your real server. EF 10 uses the <code>json</code> type at level 170+ or with <code>UseAzureSql</code>.</li>
+    <li>PostgreSQL: store UTC <code>DateTime</code> for <code>timestamptz</code>. Consider snake_case naming and native enums.</li>
+    <li>SQLite has type and ALTER TABLE limitations. Multi-provider apps need one migration set per provider.</li>
+  </ul>
+</div>
+
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Provider tune-up</h4>
+  <h3 class="box-title">🛠 Provider tune-up</h3>
   <ol>
     <li>Run <code>SELECT compatibility_level FROM sys.databases WHERE name = DB_NAME()</code> and set <code>UseCompatibilityLevel</code> to match.</li>
     <li>Set <code>UseCompatibilityLevel(120)</code> and run <code>db.Orders.Where(o =&gt; ids.Contains(o.Id))</code> with a parameterized collection mode. Compare the SQL with level 160. What changed and why?</li>

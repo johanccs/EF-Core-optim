@@ -9,7 +9,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Avoid per-row round trips by letting EF batch changes.</li>
     <li>Update and delete many rows without loading them, using <code>ExecuteUpdateAsync</code> and <code>ExecuteDeleteAsync</code>.</li>
@@ -150,9 +150,19 @@ bulk.ColumnMappings.Add(nameof(Product.Name), "Name");
 await bulk.WriteToServerAsync(dataTableOrDataReader);
 ```
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Never call <code>SaveChanges</code> in a loop. Let EF batch changes, and chunk very large imports.</li>
+    <li><code>ExecuteUpdateAsync</code>/<code>ExecuteDeleteAsync</code> change many rows in one statement without loading them.</li>
+    <li>Execute* methods bypass the change tracker, SaveChanges interceptors and SaveChanges' transaction.</li>
+    <li>For hundreds of thousands of rows, use the database's bulk path (<code>SqlBulkCopy</code>, <code>COPY</code>).</li>
+  </ul>
+</div>
+
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Four ways to write</h4>
+  <h3 class="box-title">🛠 Four ways to write</h3>
   <p>Insert 50,000 products and time each approach:</p>
   <ol>
     <li><code>Add</code> + <code>SaveChanges</code> per row</li>

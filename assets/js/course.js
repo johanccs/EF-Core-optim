@@ -93,11 +93,11 @@
   function buildTopbar() {
     var bar = el("header", { "class": "topbar" });
     bar.innerHTML =
-      '<button class="icon-btn" id="menu-btn" aria-label="Toggle lesson menu">☰</button>' +
+      '<button type="button" class="icon-btn" id="menu-btn" aria-label="Toggle lesson menu">☰</button>' +
       '<a class="brand" href="' + root + 'index.html"><span class="logo">EF</span><span>EF Core Optimization</span></a>' +
       '<span class="spacer"></span>' +
       '<span class="progress-pill" id="progress-pill"></span>' +
-      '<button class="icon-btn" id="theme-btn" aria-label="Toggle dark mode"></button>';
+      '<button type="button" class="icon-btn" id="theme-btn" aria-label="Toggle dark mode"></button>';
     body.insertBefore(bar, body.firstChild);
     var themeBtn = bar.querySelector("#theme-btn");
     function paint() { themeBtn.textContent = currentTheme() === "dark" ? "☀ Light" : "☾ Dark"; }
@@ -163,8 +163,8 @@
     function paint() {
       var done = isDone(lesson.id);
       box.innerHTML = done
-        ? '<p>Nice work, you\'ve completed this lesson.</p><button class="btn done" id="complete-btn">✓ Completed (click to undo)</button>'
-        : '<p>Finished the reading, the exercise and the quiz?</p><button class="btn" id="complete-btn">Mark lesson as complete</button>';
+        ? '<p>Nice work, you\'ve completed this lesson.</p><button type="button" class="btn done" id="complete-btn">✓ Completed (click to undo)</button>'
+        : '<p>Finished the reading, the exercise and the quiz?</p><button type="button" class="btn" id="complete-btn">Mark lesson as complete</button>';
       box.querySelector("#complete-btn").addEventListener("click", function () {
         setDone(lesson.id, !isDone(lesson.id));
         paint(); buildSidebar(); updateProgressPill();
@@ -223,6 +223,15 @@
   function wireQuizzes() {
     document.querySelectorAll(".quiz").forEach(function (quiz) {
       var answer = quiz.getAttribute("data-answer");
+      var q = quiz.querySelector(".q");
+      var opts = quiz.querySelector(".opts");
+      if (q && opts) {
+        q.id = q.id || "q-" + Math.random().toString(36).slice(2, 9);
+        opts.setAttribute("role", "group");
+        opts.setAttribute("aria-labelledby", q.id);
+      }
+      var exp = quiz.querySelector(".explain");
+      if (exp) exp.setAttribute("aria-live", "polite");
       quiz.querySelectorAll("button.opt").forEach(function (btn) {
         btn.addEventListener("click", function () {
           if (quiz.classList.contains("answered")) return;
@@ -232,12 +241,26 @@
             if (b.getAttribute("data-opt") === answer) b.classList.add("correct");
           });
           if (btn.getAttribute("data-opt") !== answer) btn.classList.add("wrong");
+          btn.setAttribute("aria-pressed", "true");
           var ex = quiz.querySelector(".explain");
           if (ex) ex.insertAdjacentHTML("afterbegin", btn.getAttribute("data-opt") === answer ? "<b>Correct.</b> " : "<b>Not quite.</b> ");
         });
       });
     });
   }
+
+  /* ---------- Clipboard (with fallback for non-secure contexts) ---------- */
+  function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+    return new Promise(function (resolve, reject) {
+      var ta = document.createElement("textarea");
+      ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy") ? resolve() : reject(); } catch (e) { reject(e); }
+      document.body.removeChild(ta);
+    });
+  }
+  window.EFCourseCopy = copyText;
 
   /* ---------- Code blocks ---------- */
   function wireCode() {
@@ -248,7 +271,7 @@
       btn.addEventListener("click", function () {
         var text = code.innerText;
         var done = function () { btn.textContent = "Copied"; setTimeout(function () { btn.textContent = "Copy"; }, 1400); };
-        if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, function () {});
+        copyText(text).then(done, function () { btn.textContent = "Copy failed"; });
       });
       pre.appendChild(btn);
     });
@@ -256,9 +279,14 @@
 
   /* ---------- Heading anchors ---------- */
   function addAnchors() {
+    var used = {};
     document.querySelectorAll("article h2, article h3").forEach(function (h) {
-      if (h.id) return;
-      h.id = h.textContent.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      if (h.id) { used[h.id] = true; return; }
+      var base = h.textContent.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "section";
+      var id = base, n = 2;
+      while (used[id] || document.getElementById(id)) id = base + "-" + n++;   // keep ids unique
+      used[id] = true;
+      h.id = id;
     });
     if (location.hash) {
       var target = document.getElementById(location.hash.slice(1));

@@ -9,7 +9,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Measure where startup time goes.</li>
     <li>Generate and use a compiled model with <code>dotnet ef dbcontext optimize</code>.</li>
@@ -115,9 +115,19 @@ Precompiled queries and Native AOT support were introduced as <b>experimental</b
   <li>Serverless or scale-to-zero? Consider ReadyToRun or Native AOT for the whole app, and evaluate precompiled queries.</li>
 </ul>
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Model building runs once per process, but it costs seconds for large models.</li>
+    <li>Compiled models remove model building. Automate regeneration (EF 9+ MSBuild integration).</li>
+    <li>Warm up connections and hot query shapes before accepting traffic.</li>
+    <li>Precompiled queries and Native AOT are still experimental. Evaluate them before relying on them.</li>
+  </ul>
+</div>
+
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Shave the cold start</h4>
+  <h3 class="box-title">🛠 Shave the cold start</h3>
   <ol>
     <li>Generate 300 dummy entity types with a script, add them to a test context, and measure model build time.</li>
     <li>Run <code>dotnet ef dbcontext optimize</code>, plug in the compiled model, and measure again.</li>

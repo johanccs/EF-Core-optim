@@ -9,7 +9,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Explain configuration precedence: conventions, data annotations, Fluent API.</li>
     <li>Organize configuration with <code>IEntityTypeConfiguration&lt;T&gt;</code> and shared base configurations.</li>
@@ -160,9 +160,19 @@ options.UseSqlServer(connStr)
   <li><b>Review every migration diff.</b> It's the clearest record of what a configuration change does to the database.</li>
 </ul>
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Precedence: pre-convention configuration &lt; conventions &lt; data annotations &lt; Fluent API.</li>
+    <li>Organize with <code>IEntityTypeConfiguration&lt;T&gt;</code> and shared base configurations. Apply model-wide rules in <code>ConfigureConventions</code>.</li>
+    <li>Use <code>HasData</code> for small static reference data, and <code>UseSeeding</code>/<code>UseAsyncSeeding</code> (EF 9+) for everything else.</li>
+    <li>Review every migration diff. It shows exactly what a configuration change does.</li>
+  </ul>
+</div>
+
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Make it consistent</h4>
+  <h3 class="box-title">🛠 Make it consistent</h3>
   <ol>
     <li>Introduce <code>IAuditable</code> and <code>AuditableConfiguration&lt;T&gt;</code>, and apply them to Order and Customer.</li>
     <li>Add <code>ConfigureConventions</code> rules for strings, decimals and enums-as-strings. Generate a migration and review every changed column.</li>

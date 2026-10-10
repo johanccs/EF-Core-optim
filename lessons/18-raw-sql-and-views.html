@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -23,7 +23,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Query entities with <code>FromSql</code> and compose LINQ on top.</li>
     <li>Query unmapped types and scalars with <code>Database.SqlQuery&lt;T&gt;</code>.</li>
@@ -152,9 +152,19 @@ var q = db.Products.Select(p =&gt; new { p.Name, Final = ShopContext.Discount(p.
   <li>Not as a first resort. LINQ is type-safe, refactorable and composable.</li>
 </ul>
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li><code>FromSql</code>/<code>ExecuteSql</code> parameterize interpolated values, so they're safe by construction.</li>
+    <li><code>FromSqlRaw</code> is for dynamic structure only. Allow-list identifiers and never concatenate values.</li>
+    <li><code>SqlQuery&lt;T&gt;</code> materializes unmapped types and scalars. Keyless entities map views.</li>
+    <li>Composable SELECTs can be extended with LINQ. Stored procedures can't.</li>
+  </ul>
+</div>
+
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Build a report two ways</h4>
+  <h3 class="box-title">🛠 Build a report two ways</h3>
   <ol>
     <li>Write the "top 10 customers by spend in the last 90 days" report in LINQ and inspect the SQL.</li>
     <li>Write it as a view <code>vw_CustomerSpend90d</code>, map it as a keyless entity and query it.</li>

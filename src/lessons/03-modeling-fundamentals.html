@@ -9,7 +9,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Explain EF Core's conventions and how to override them.</li>
     <li>Choose between data annotations and the Fluent API, and organize configuration with <code>IEntityTypeConfiguration&lt;T&gt;</code>.</li>
@@ -139,9 +139,19 @@ Having <code>CustomerId</code> as a real property, not just the <code>Customer</
   <li><b>Natural keys</b> (e.g. <code>Sku</code>): usually better as a unique index than as the primary key, because they can change and are wider.</li>
 </ul>
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Conventions are a starting point, not a design. Check what EF generated with <code>Model.ToDebugString()</code>.</li>
+    <li>Always bound string lengths, set decimal precision, and use <code>IsUnicode(false)</code> for ASCII data.</li>
+    <li>EF indexes foreign keys automatically. Every other index is your job.</li>
+    <li>Expose foreign-key properties so you can set relationships without loading the related entity.</li>
+  </ul>
+</div>
+
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Tighten the model</h4>
+  <h3 class="box-title">🛠 Tighten the model</h3>
   <ol>
     <li>Move each entity's configuration into an <code>IEntityTypeConfiguration&lt;T&gt;</code> class.</li>
     <li>Add <code>ConfigureConventions</code> with sensible string, decimal and DateTime defaults.</li>

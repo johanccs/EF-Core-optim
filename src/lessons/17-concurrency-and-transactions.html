@@ -9,7 +9,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Implement optimistic concurrency with row versions and concurrency tokens.</li>
     <li>Resolve <code>DbUpdateConcurrencyException</code> correctly.</li>
@@ -135,9 +135,19 @@ await strategy.ExecuteAsync(async () =>
 ```
 <p>The delegate may run more than once, so make it <b>idempotent</b>. Don't, for example, add entities to the context outside the delegate and then retry. Create or attach them inside it.</p>
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Optimistic concurrency (row version or concurrency token) prevents lost updates without locks.</li>
+    <li>Handle <code>DbUpdateConcurrencyException</code> explicitly: retry a bounded number of times, merge, or return 409.</li>
+    <li>Keep transactions short, with no external I/O inside them. Consider RCSI on SQL Server.</li>
+    <li>With retry-on-failure enabled, run manual transactions inside <code>CreateExecutionStrategy().ExecuteAsync</code>.</li>
+  </ul>
+</div>
+
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Simulate a lost update</h4>
+  <h3 class="box-title">🛠 Simulate a lost update</h3>
   <ol>
     <li>Without a concurrency token, open two contexts, load the same product in each, change the price differently, and save both. Which value wins? (The last writer silently overwrites.)</li>
     <li>Add <code>[Timestamp] RowVersion</code>, migrate, and repeat. Catch the exception and implement "database wins".</li>

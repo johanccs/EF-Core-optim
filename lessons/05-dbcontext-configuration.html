@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -23,7 +23,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Explain how <code>DbContextOptions&lt;T&gt;</code> is built and in what order configuration runs.</li>
     <li>Pick between <code>AddDbContext</code>, <code>OnConfiguring</code>, <code>AddDbContextFactory</code> and manual construction.</li>
@@ -59,12 +59,14 @@ If both <code>AddDbContext</code> and <code>OnConfiguring</code> set the same op
 
 <h2>Choosing how to configure</h2>
 <table>
-  <tr><th>Approach</th><th>When to use</th><th>Lifetime</th></tr>
+  <thead><tr><th scope="col">Approach</th><th scope="col">When to use</th><th scope="col">Lifetime</th></tr></thead>
+  <tbody>
   <tr><td><code>AddDbContext&lt;T&gt;</code></td><td>ASP.NET Core and most hosted apps: one context per request or scope</td><td>Scoped (default)</td></tr>
   <tr><td><code>AddDbContextFactory&lt;T&gt;</code></td><td>Blazor Server, background services, parallel work, any code that needs several short-lived contexts</td><td>You control it: <code>await using var db = factory.CreateDbContext()</code></td></tr>
   <tr><td><code>AddDbContextPool&lt;T&gt;</code> / <code>AddPooledDbContextFactory&lt;T&gt;</code></td><td>High-throughput services (Lesson 20)</td><td>Pooled instances</td></tr>
   <tr><td><code>OnConfiguring</code> only</td><td>Small console tools, samples, quick prototypes</td><td><code>new ShopContext()</code></td></tr>
   <tr><td>Manual <code>DbContextOptionsBuilder</code></td><td>Tests, benchmarks, tools without DI</td><td><code>new ShopContext(options)</code></td></tr>
+  </tbody>
 </table>
 
 <h3>Resolving services while configuring</h3>
@@ -164,17 +166,29 @@ With more than one context, each constructor must take <code>DbContextOptions&lt
 
 <h2>Common configuration errors decoded</h2>
 <table>
-  <tr><th>Error message</th><th>Usual cause</th></tr>
+  <thead><tr><th scope="col">Error message</th><th scope="col">Usual cause</th></tr></thead>
+  <tbody>
   <tr><td>No database provider has been configured for this DbContext</td><td>The context was created with <code>new</code> without options, or <code>OnConfiguring</code> doesn't call <code>UseXxx</code>.</td></tr>
   <tr><td>Unable to create a DbContext of type '…' at design time</td><td>The tools can't build your host. Add an <code>IDesignTimeDbContextFactory</code>.</td></tr>
   <tr><td>Cannot consume scoped service 'ShopContext' from singleton '…'</td><td>A singleton (often a hosted service) injects the context. Use a factory.</td></tr>
   <tr><td>A second operation was started on this context instance…</td><td>Concurrent use of one context, such as <code>Task.WhenAll</code> or a missing <code>await</code>.</td></tr>
   <tr><td>The DbContextOptions passed to the X constructor must be a DbContextOptions&lt;X&gt;</td><td>Multiple contexts using the non-generic options type.</td></tr>
+  </tbody>
 </table>
+
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Configuration flows from the outside (DI or options), then <code>OnConfiguring</code>, which runs last. Guard fallbacks with <code>IsConfigured</code>.</li>
+    <li>Bind database settings to a validated options class and use <code>ValidateOnStart</code> to fail fast.</li>
+    <li>Each context in a multi-context app takes <code>DbContextOptions&lt;TContext&gt;</code> and can have its own schema and migrations history.</li>
+    <li><code>IDesignTimeDbContextFactory</code> makes the <code>dotnet ef</code> tools independent of your app's startup.</li>
+  </ul>
+</div>
 
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Production-grade configuration</h4>
+  <h3 class="box-title">🛠 Production-grade configuration</h3>
   <ol>
     <li>Create <code>DatabaseOptions</code>, bind it with <code>ValidateOnStart</code>, and configure <code>ShopContext</code> from it.</li>
     <li>Delete the <code>CommandTimeoutSeconds</code> value, set it to <code>0</code>, and start the app. Confirm it refuses to start, with a clear message.</li>

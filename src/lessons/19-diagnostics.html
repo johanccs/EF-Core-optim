@@ -9,7 +9,7 @@
 </div>
 
 <div class="objectives">
-  <h4>By the end of this lesson you will be able to</h4>
+  <h2 class="box-title">By the end of this lesson you will be able to</h2>
   <ul>
     <li>Follow a repeatable workflow: measure, locate, explain, fix, verify.</li>
     <li>Tag queries so you can trace SQL back to C# code.</li>
@@ -119,9 +119,19 @@ builder.Services.AddOpenTelemetry()
 ```
 <p>Send the data to .NET Aspire's dashboard locally, or to Jaeger, Grafana, Azure Monitor, Datadog or Honeycomb in production.</p>
 
+<div class="takeaways">
+  <h2 class="box-title">🔑 Key takeaways</h2>
+  <ul>
+    <li>Follow a loop: measure, locate, explain, fix, verify.</li>
+    <li>Tag queries (<code>TagWith</code>, <code>TagWithCallSite</code>) so SQL can be traced back to code.</li>
+    <li>Read execution plans for scans, key lookups, bad estimates and implicit conversions.</li>
+    <li>Monitor EF metrics (cache hits and misses, active contexts) and use distributed tracing in production.</li>
+  </ul>
+</div>
+
 <h2>Exercise</h2>
 <div class="exercise">
-  <h4>🛠 Build your toolkit</h4>
+  <h3 class="box-title">🛠 Build your toolkit</h3>
   <ol>
     <li>Add <code>SlowQueryInterceptor</code> with a 50 ms threshold to the playground, and run a deliberately bad query (e.g. <code>Name.Contains</code> on 1M rows).</li>
     <li>Tag three queries with <code>TagWithCallSite()</code> and find them in the log output.</li>

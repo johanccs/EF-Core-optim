@@ -167,8 +167,10 @@ try {
     await page.addScriptTag({ content: AXE });
     const v = await page.evaluate(async () => (await axe.run(".ai-modal", { runOnly: ["wcag2a", "wcag2aa"] })).violations);
     check(v.length === 0, "AI modal has no axe violations" + (v.length ? ": " + v.map((x) => x.id).join(",") : ""));
+    // Focus can legitimately leave the modal (e.g. clicking plain text in it); Escape must still close it
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
     await page.keyboard.press("Escape");
-    check(!(await page.isVisible(".ai-modal")), "Escape closes the modal");
+    check(!(await page.isVisible(".ai-modal")), "Escape closes the modal, even when focus has left it");
     check(errors.length === 0, "no page or CSP errors" + (errors.length ? ": " + errors.join(" | ") : ""));
     await page.close();
   }

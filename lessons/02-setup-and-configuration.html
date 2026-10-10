@@ -16,6 +16,12 @@
 <p class="lead">Before you optimize anything you need to see the SQL EF Core runs. This lesson covers registering a DbContext properly, the options worth knowing, and making EF show you what it's doing.</p>
 <div class="meta"><span class="badge">⏱ 25 min</span></div>
 
+<div class="goal">
+  <span class="title">🎯 Goal of this lesson</span>
+  <p>Get a correctly configured DbContext running quickly and, above all, <b>make EF show you the SQL it executes</b>. That habit underpins the rest of the course.</p>
+  <p><b>Why it matters:</b> Most EF performance problems are invisible until you look at the generated SQL. Logging and the right lifetime from day one prevent whole classes of bugs. Level 2 then goes deeper into configuration.</p>
+</div>
+
 <div class="objectives">
   <h4>By the end of this lesson you will be able to</h4>
   <ul>
@@ -37,7 +43,7 @@ builder.Services.AddDbContext&lt;ShopContext&gt;(options =&gt;
         sql =&gt;
         {
             sql.CommandTimeout(30);                 // seconds
-            sql.EnableRetryOnFailure(               // transient fault handling (Lesson 12)
+            sql.EnableRetryOnFailure(               // transient fault handling (Lesson 17)
                 maxRetryCount: 5,
                 maxRetryDelay: TimeSpan.FromSeconds(10),
                 errorNumbersToAdd: null);
@@ -127,7 +133,7 @@ Console.WriteLine(query.ToQueryString());   // great in unit tests and in the de
                .EnableDetailedErrors();
     }
 
-    // Fail fast on patterns that hurt performance (see Lessons 7 and 10)
+    // Fail fast on patterns that hurt performance (see Lessons 12 and 15)
     options.ConfigureWarnings(w =&gt; w
         .Throw(RelationalEventId.MultipleCollectionIncludeWarning));
 });</code></pre>
@@ -138,7 +144,10 @@ EF logs warnings for risky patterns. Examples: loading several collections in on
 <h2>Connection pooling: already on</h2>
 <p>ADO.NET providers pool physical database connections by default. Opening and closing a <code>SqlConnection</code> just borrows from and returns to the pool. EF opens the connection as late as possible and closes it as early as possible, which is the right behaviour. Tune pool size in the connection string (<code>Max Pool Size</code>, default 100 for SqlClient) only if you see pool exhaustion errors under load.</p>
 <div class="callout info"><span class="title">Connection pooling ≠ DbContext pooling</span>
-Connection pooling (ADO.NET) reuses database connections. DbContext pooling (EF, Lesson 15) reuses <code>DbContext</code> objects. They solve different problems and work together.</div>
+Connection pooling (ADO.NET) reuses database connections. DbContext pooling (EF, Lesson 20) reuses <code>DbContext</code> objects. They solve different problems and work together.</div>
+
+<div class="callout new"><span class="title">Going deeper</span>
+This lesson covers just enough configuration to get started. <b>Level 2 · Configuration</b> covers the rest in depth: the options pipeline and design-time tools (Lesson 5), connection strings, secrets and pooling (Lesson 6), provider-specific settings (Lesson 7), model configuration at scale (Lesson 8), and environments and testing (Lesson 9).</div>
 
 <h2>Exercise</h2>
 <div class="exercise">
@@ -201,5 +210,6 @@ Connection pooling (ADO.NET) reuses database connections. DbContext pooling (EF,
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="../assets/js/course.js"></script>
+<script src="../assets/js/ai-assistant.js"></script>
 </body>
 </html>

@@ -1,0 +1,145 @@
+<h1>Split Queries &amp; Cartesian Explosion</h1>
+<p class="lead">Including several collections in one query can multiply the rows the database returns. This lesson explains cartesian explosion and how split queries fix it, along with their trade-offs.</p>
+<div class="meta"><span class="badge">⏱ 25 min</span></div>
+
+<div class="goal">
+  <span class="title">🎯 Goal of this lesson</span>
+  <p>Understand <b>cartesian explosion</b> and learn when splitting one query into several is faster, and when it isn't.</p>
+  <p><b>Why it matters:</b> Loading multiple collections in one query can multiply returned rows by orders of magnitude. Knowing the trade-off lets you choose based on measurements, not folklore.</p>
+</div>
+
+<div class="objectives">
+  <h4>By the end of this lesson you will be able to</h4>
+  <ul>
+    <li>Explain cartesian explosion and data duplication in single queries.</li>
+    <li>Use <code>AsSplitQuery()</code> and <code>AsSingleQuery()</code>, and set a global default.</li>
+    <li>Understand the consistency and round-trip trade-offs of split queries.</li>
+    <li>Choose the right approach for a given query.</li>
+  </ul>
+</div>
+
+<h2>The problem</h2>
+<p>Suppose <code>Customer</code> has two collections, <code>Orders</code> and <code>Addresses</code>. In a relational database, one query that loads both must JOIN them:</p>
+
+```csharp
+var customers = await db.Customers
+    .Include(c => c.Orders)
+    .Include(c => c.Addresses)
+    .Where(c => c.Id < 100)
+    .ToListAsync();
+```
+<p>For a customer with 50 orders and 4 addresses, the JOIN produces <b>50 × 4 = 200 rows</b> for that one customer. Every customer column is repeated in all 200 rows. Every order is repeated 4 times, and every address 50 times. Add a third collection and it multiplies again. This is <b>cartesian explosion</b>.</p>
+
+<div class="callout warn"><span class="title">Even one collection duplicates data</span>
+<code>Include(o =&gt; o.Lines)</code> repeats all of the order's columns in every line row. If the parent has large columns, such as the 2 KB <code>Description</code> on Product, that duplication alone can dominate network transfer.</div>
+
+<p>EF warns you when a query loads multiple collections with single-query behaviour and no explicit choice:</p>
+<pre><code class="language-plaintext">warn: Microsoft.EntityFrameworkCore.Query[20504]
+      Compiling a query which loads related collections for more than one collection navigation,
+      either via 'Include' or through projection, but no 'QuerySplittingBehavior' has been configured...</code></pre>
+
+<h2>The solution: AsSplitQuery</h2>
+
+```csharp
+var customers = await db.Customers
+    .Include(c => c.Orders)
+    .Include(c => c.Addresses)
+    .Where(c => c.Id < 100)
+    .AsSplitQuery()
+    .ToListAsync();
+```
+
+```sql label="EF sends three queries"
+SELECT [c].* FROM [Customers] AS [c] WHERE [c].[Id] < 100 ORDER BY [c].[Id];
+
+SELECT [o].*, [c].[Id] FROM [Customers] AS [c]
+INNER JOIN [Orders] AS [o] ON [c].[Id] = [o].[CustomerId]
+WHERE [c].[Id] < 100 ORDER BY [c].[Id];
+
+SELECT [a].*, [c].[Id] FROM [Customers] AS [c]
+INNER JOIN [Addresses] AS [a] ON [c].[Id] = [a].[CustomerId]
+WHERE [c].[Id] < 100 ORDER BY [c].[Id];
+```
+<p>Total rows are now 100 + (orders) + (addresses) instead of their product. Split queries also work with collections inside projections:</p>
+
+```csharp
+var dto = await db.Customers
+    .Select(c => new { c.Name, Orders = c.Orders.Select(o => o.Total).ToList(), Cities = c.Addresses.Select(a => a.City).ToList() })
+    .AsSplitQuery()
+    .ToListAsync();
+```
+
+<h2>Trade-offs</h2>
+<table>
+  <tr><th></th><th>Single query (default)</th><th>Split query</th></tr>
+  <tr><td>Round trips</td><td>1</td><td>1 + number of collection includes</td></tr>
+  <tr><td>Data duplication</td><td>High with collections</td><td>None</td></tr>
+  <tr><td>Consistency</td><td>Atomic snapshot</td><td>⚠ Data can change between queries unless you use a serializable or snapshot transaction</td></tr>
+  <tr><td>Skip/Take on the root</td><td>Fine</td><td>⚠ Needs a <b>unique</b> ordering, or child queries may not match the root page</td></tr>
+  <tr><td>Best when</td><td>Reference navigations only, or one small collection; high-latency networks</td><td>Several or large collections, wide parent rows</td></tr>
+</table>
+
+<div class="callout info"><span class="title">Buffering note</span>
+On SQL Server without MARS (Multiple Active Result Sets), EF must buffer the results of all split queries except the last one in memory. That's usually fine, but worth knowing for very large results.</div>
+
+<h2>Setting a global default</h2>
+
+```csharp
+options.UseSqlServer(connStr, sql =>
+    sql.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery));
+
+// Opt back into a single query where it's better:
+var order = await db.Orders.Include(o => o.Customer).Include(o => o.Lines)
+                           .AsSingleQuery().SingleAsync(o => o.Id == id);
+```
+
+<div class="callout tip"><span class="title">How to decide</span>
+Don't choose by rule. <b>Measure both</b> with realistic data and realistic network latency. A split query trades data volume for round trips. With 0.2 ms local latency, splitting almost always wins for multiple collections. With a 20 ms cross-region link, the extra round trips may cost more than the duplicated data. Often the best answer is neither: <b>project only what you need</b> (Lesson 11), so the duplication is a few narrow columns.</div>
+
+<h2>Exercise</h2>
+<div class="exercise">
+  <h4>🛠 Watch the rows multiply</h4>
+  <ol>
+    <li>Add an <code>Address</code> entity (Id, CustomerId, City) and seed 5 addresses per customer.</li>
+    <li>Run the double-include query for 100 customers as a single query. Log how many rows come back: run the SQL from <code>ToQueryString()</code> in your SQL tool.</li>
+    <li>Switch to <code>AsSplitQuery()</code> and compare row counts and elapsed time.</li>
+    <li>Rewrite it as a projection that only takes <code>Order.Total</code> and <code>Address.City</code>. Compare again.</li>
+  </ol>
+  <details><summary>What to expect</summary>
+  <p>Single query: about 100 × 10 × 5 = 5,000 wide rows. Split: about 100 + 1,000 + 500 = 1,600 rows across three queries. The projection with split is the leanest of all.</p>
+  </details>
+</div>
+
+<h2>Quiz</h2>
+
+:::quiz b
+A query includes `Orders` (avg 20 per customer) and `Tags` (avg 10 per customer) for 50 customers. About how many rows does the single query return?
+a) 80
+b) 10,000
+c) 1,500
+d) 50
+> 50 × 20 × 10 = 10,000 rows. The collections multiply each other.
+:::
+
+:::quiz c
+What's a real risk of split queries?
+a) They can't use indexes
+b) They disable change tracking
+c) Data can change between the separate queries, giving an inconsistent result
+d) They can't be used with projections
+> Each query is a separate statement. Use a snapshot or serializable transaction if you need strict consistency.
+:::
+
+:::quiz a
+When paging with `Skip`/`Take` and `AsSplitQuery()`, what must you ensure?
+a) The ordering is unique, e.g. ends with the primary key
+b) You use `AsNoTracking()`
+c) MARS is enabled
+d) The page size is under 100
+> Each split query re-applies the paging. A non-unique ordering can select different root rows in each query.
+:::
+
+<h2>Further reading</h2>
+<ul>
+  <li><a href="https://learn.microsoft.com/ef/core/querying/single-split-queries" target="_blank" rel="noopener">Single vs. split queries</a></li>
+</ul>

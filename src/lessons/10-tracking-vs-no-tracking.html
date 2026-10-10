@@ -1,0 +1,159 @@
+<h1>Tracking vs No-Tracking Queries</h1>
+<p class="lead">By default, every entity EF Core loads is registered in the change tracker and snapshotted. That's essential when you plan to update entities, and pure overhead when you only read them. This lesson shows how to choose.</p>
+<div class="meta"><span class="badge">⏱ 25 min</span></div>
+
+<div class="goal">
+  <span class="title">🎯 Goal of this lesson</span>
+  <p>Learn <b>when change tracking is needed and when it's pure overhead</b>, and how to read and update data without paying for tracking you don't use.</p>
+  <p><b>Why it matters:</b> Tracking costs CPU and memory on every row. Choosing the right tracking mode is often the cheapest speed-up for read-heavy endpoints, and understanding it prevents subtle update bugs.</p>
+</div>
+
+<div class="objectives">
+  <h4>By the end of this lesson you will be able to</h4>
+  <ul>
+    <li>Explain what tracking costs: memory, snapshots, identity resolution and <code>DetectChanges</code>.</li>
+    <li>Use <code>AsNoTracking</code>, <code>AsNoTrackingWithIdentityResolution</code> and <code>AsTracking</code>.</li>
+    <li>Set a context-wide default tracking behaviour.</li>
+    <li>Update entities without loading them, using <code>Attach</code> and <code>Entry</code>.</li>
+  </ul>
+</div>
+
+<h2>What tracking does</h2>
+<p>For each entity returned by a tracking query, EF:</p>
+<ol>
+  <li>Looks up its key in the identity map. If an instance with that key is already tracked, EF returns <b>that same instance</b> and throws away the new row data. This is identity resolution.</li>
+  <li>Otherwise it creates an <code>InternalEntityEntry</code>, stores a snapshot of original values, and fixes up navigation properties to other tracked entities.</li>
+  <li>Later, <code>SaveChanges()</code> (and many other APIs) call <code>DetectChanges()</code>, which compares every tracked entity with its snapshot.</li>
+</ol>
+<p>None of this is needed for read-only scenarios such as API GET endpoints, reports, exports and view models.</p>
+
+<h2>AsNoTracking</h2>
+
+```csharp
+var products = await db.Products
+    .AsNoTracking()
+    .Where(p => p.CategoryId == categoryId)
+    .ToListAsync();
+```
+<p>The SQL is identical. Only the work EF does in .NET changes. Microsoft's benchmarks and many community measurements show no-tracking queries are noticeably faster and allocate much less memory. The gap grows with the number of rows returned.</p>
+
+<div class="callout warn"><span class="title">The catch: no identity resolution</span>
+Without tracking, the same database row returned twice becomes <b>two separate objects</b>. Loading 1,000 orders with <code>Include(o =&gt; o.Customer)</code> where all orders belong to 3 customers gives you 1,000 <code>Customer</code> instances, not 3.</div>
+
+<h3>AsNoTrackingWithIdentityResolution</h3>
+<p>This gives you de-duplicated instances without full tracking. EF uses a temporary identity map for the duration of the query, then discards it:</p>
+
+```csharp
+var orders = await db.Orders
+    .AsNoTrackingWithIdentityResolution()
+    .Include(o => o.Customer)
+    .ToListAsync();
+// orders sharing a customer point to the SAME Customer object
+```
+<p>It's slower than plain <code>AsNoTracking</code> but faster than tracking. Use it when you serialize graphs with shared references or need reference equality.</p>
+
+<h2>Choosing a tracking mode</h2>
+<table>
+  <tr><th>Scenario</th><th>Use</th></tr>
+  <tr><td>Load, modify, <code>SaveChanges</code></td><td>Tracking (the default)</td></tr>
+  <tr><td>Read-only list or detail returned as JSON</td><td><code>AsNoTracking()</code>, or better, a projection (Lesson 11)</td></tr>
+  <tr><td>Read-only graph with many shared references</td><td><code>AsNoTrackingWithIdentityResolution()</code></td></tr>
+  <tr><td>Projection to a DTO or anonymous type</td><td>Nothing needed. Non-entity results aren't tracked.</td></tr>
+</table>
+
+<div class="callout info"><span class="title">Projections are untracked automatically</span>
+<code>db.Products.Select(p =&gt; new ProductDto(p.Id, p.Name))</code> is never tracked, because DTOs aren't entities. If a projection <i>contains</i> an entity instance, such as <code>new { Product = p, p.Category.Name }</code>, that entity <b>is</b> tracked in a tracking query.</div>
+
+<h2>Context-wide default</h2>
+<p>For read-heavy services, make no-tracking the default and opt in where you write:</p>
+
+```csharp
+builder.Services.AddDbContext<ShopContext>(o => o
+    .UseSqlServer(connStr)
+    .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking));
+
+// When you need to update:
+var order = await db.Orders.AsTracking().SingleAsync(o => o.Id == id);
+order.Status = OrderStatus.Shipped;
+await db.SaveChangesAsync();
+```
+<p>You can also change it per context instance: <code>db.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;</code>.</p>
+
+<div class="callout tip"><span class="title">Read/write separation</span>
+A common pattern in larger systems is a <code>ReadShopContext</code> with no-tracking defaults, possibly pointed at a read replica, alongside the normal writable context. Query handlers inject the read context and command handlers the write context.</div>
+
+<h2>Updating without loading</h2>
+<p>If you already know the key and the new values, you don't need a <code>SELECT</code> first:</p>
+
+```csharp
+// Update one column of a known row: 1 round trip instead of 2
+var product = new Product { Id = productId };
+db.Products.Attach(product);                  // tracked as Unchanged
+product.Price = newPrice;                     // only Price becomes Modified
+await db.SaveChangesAsync();
+// UPDATE [Products] SET [Price] = @p0 WHERE [Id] = @p1
+```
+<p>For set-based updates of many rows there's an even better tool, <code>ExecuteUpdateAsync</code> (Lesson 16).</p>
+<div class="callout warn"><span class="title">Careful with <code>Update()</code></span>
+<code>db.Update(entity)</code> marks <b>every</b> property as modified and updates all columns, including ones you didn't change, and it walks the whole reachable graph. Prefer <code>Attach</code> plus setting the changed properties, or <code>Entry(e).Property(x =&gt; x.Price).IsModified = true</code>.</div>
+
+<h2>Keeping the change tracker small</h2>
+<p>Long-lived contexts with thousands of tracked entities make every <code>DetectChanges</code> slower. When processing in batches:</p>
+
+```csharp
+foreach (var batch in ids.Chunk(1000))
+{
+    var items = await db.Orders.Where(o => batch.Contains(o.Id)).ToListAsync();
+    foreach (var o in items) o.Status = OrderStatus.Shipped;
+    await db.SaveChangesAsync();
+    db.ChangeTracker.Clear();           // forget everything tracked so far
+}
+```
+
+<h2>Exercise</h2>
+<div class="exercise">
+  <h4>🛠 Measure it</h4>
+  <ol>
+    <li>Load all 10,000 orders with <code>Include(o =&gt; o.Customer)</code> three ways: tracking, <code>AsNoTracking</code>, <code>AsNoTrackingWithIdentityResolution</code>.</li>
+    <li>Time each with <code>Stopwatch</code> (run each a few times and discard the first) and check memory with <code>GC.GetAllocatedBytesForCurrentThread()</code>.</li>
+    <li>Count distinct customer instances: <code>orders.Select(o =&gt; o.Customer).Distinct(ReferenceEqualityComparer.Instance).Count()</code>.</li>
+  </ol>
+  <details><summary>What to expect</summary>
+  <p>No-tracking is fastest and allocates least, but you get about 10,000 Customer instances. Both other modes give about 1,000. In Lesson 25 you'll redo this properly with BenchmarkDotNet.</p>
+  </details>
+</div>
+
+<h2>Quiz</h2>
+
+:::quiz a
+Does `AsNoTracking()` change the SQL that EF Core generates?
+a) No, it only changes what EF does in memory after reading rows
+b) Yes, it adds `WITH (NOLOCK)`
+c) Yes, it removes the primary key columns
+d) Yes, it adds `READ UNCOMMITTED`
+> The SQL is identical. `AsNoTracking` has nothing to do with database locking hints.
+:::
+
+:::quiz c
+You load orders with their customer using `AsNoTracking()`. Two orders share a customer. What do you get?
+a) One shared Customer instance
+b) `null` for the second customer
+c) Two separate Customer instances with the same data
+d) An exception
+> Without identity resolution each row becomes a new instance. Use `AsNoTrackingWithIdentityResolution` to de-duplicate.
+:::
+
+:::quiz b
+Which is true about `db.Update(entity)`?
+a) It only updates properties you changed
+b) It marks all properties as modified, so every column is updated
+c) It runs an `UPDATE` immediately
+d) It loads the entity first
+> `Update()` marks the whole entity, and reachable entities, as Modified. Use `Attach` and change specific properties for minimal updates.
+:::
+
+<h2>Further reading</h2>
+<ul>
+  <li><a href="https://learn.microsoft.com/ef/core/querying/tracking" target="_blank" rel="noopener">Tracking vs. no-tracking queries</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/change-tracking/" target="_blank" rel="noopener">Change tracking in EF Core</a></li>
+</ul>

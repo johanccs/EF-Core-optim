@@ -1,0 +1,180 @@
+<h1>Pagination: Offset vs Keyset</h1>
+<p class="lead">Returning unbounded result sets is one of the most common production incidents. This lesson covers how to page correctly, and why the obvious <code>Skip</code>/<code>Take</code> approach slows down as users page deeper.</p>
+<div class="meta"><span class="badge">⏱ 25 min</span></div>
+
+<div class="goal">
+  <span class="title">🎯 Goal of this lesson</span>
+  <p>Learn to <b>return large result sets in pages</b> correctly, and understand why keyset paging stays fast where offset paging slows down.</p>
+  <p><b>Why it matters:</b> Unbounded queries cause outages as data grows, and deep offset paging degrades linearly. Correct paging keeps list endpoints fast at any size.</p>
+</div>
+
+<div class="objectives">
+  <h4>By the end of this lesson you will be able to</h4>
+  <ul>
+    <li>Always limit result sets, and know why.</li>
+    <li>Implement offset pagination correctly and understand its costs.</li>
+    <li>Implement keyset (seek) pagination, including with composite sort keys.</li>
+    <li>Handle total counts efficiently.</li>
+  </ul>
+</div>
+
+<h2>Rule #1: never return unbounded results</h2>
+<p><code>db.Orders.ToListAsync()</code> is fine with 50 rows in development and an outage with 5 million rows in production. Every list endpoint should have a maximum page size enforced on the server:</p>
+
+```csharp
+const int MaxPageSize = 100;
+pageSize = Math.Clamp(pageSize, 1, MaxPageSize);
+```
+
+<h2>Offset pagination (Skip/Take)</h2>
+
+```csharp
+var page = await db.Orders
+    .AsNoTracking()
+    .OrderByDescending(o => o.PlacedUtc).ThenByDescending(o => o.Id)   // deterministic order!
+    .Skip((pageNumber - 1) * pageSize)
+    .Take(pageSize)
+    .Select(o => new { o.Id, o.PlacedUtc, o.Total })
+    .ToListAsync();
+```
+
+```sql label="SQL Server"
+SELECT [o].[Id], [o].[PlacedUtc], [o].[Total]
+FROM [Orders] AS [o]
+ORDER BY [o].[PlacedUtc] DESC, [o].[Id] DESC
+OFFSET @__p_0 ROWS FETCH NEXT @__p_1 ROWS ONLY
+```
+
+<div class="callout warn"><span class="title">Always order by a unique key</span>
+Without a total ordering the database may return rows in any order, so rows can repeat or vanish between pages. Add the primary key as a tie-breaker: <code>.ThenBy(o =&gt; o.Id)</code>.</div>
+
+<h3>Why offset gets slow</h3>
+<p>To return page 5,000 with 20 rows per page, the database must <b>read and discard 99,980 rows</b> first. Cost grows linearly with the offset. Offset paging also suffers from <b>drift</b>: if a row is inserted or deleted while the user pages, items shift and the user sees duplicates or misses rows.</p>
+
+<h2>Keyset (seek) pagination</h2>
+<p>Instead of "skip N rows", say "give me rows <b>after the last one I saw</b>". With an index on the sort key, the database seeks directly to the position. Page 5,000 costs the same as page 1.</p>
+
+```csharp
+// First page: lastId = null
+var query = db.Orders.AsNoTracking().OrderBy(o => o.Id);
+
+if (lastId is not null)
+    query = query.Where(o => o.Id > lastId);          // seek predicate
+
+var page = await query.Take(pageSize).ToListAsync();
+var nextCursor = page.LastOrDefault()?.Id;           // return to client
+```
+
+```sql
+SELECT TOP(@__p_1) ... FROM [Orders] AS [o]
+WHERE [o].[Id] > @__lastId_0
+ORDER BY [o].[Id]
+```
+
+<h3>Composite sort keys</h3>
+<p>Real lists sort by something non-unique, such as date. Use (date, id) as the cursor:</p>
+
+```csharp
+public record OrderCursor(DateTime PlacedUtc, int Id);
+
+IQueryable<Order> q = db.Orders.AsNoTracking();
+
+if (cursor is not null)
+{
+    q = q.Where(o => o.PlacedUtc < cursor.PlacedUtc
+                 || (o.PlacedUtc == cursor.PlacedUtc && o.Id < cursor.Id));
+}
+
+var page = await q
+    .OrderByDescending(o => o.PlacedUtc).ThenByDescending(o => o.Id)
+    .Take(pageSize + 1)                      // fetch one extra to know if there's a next page
+    .Select(o => new { o.Id, o.PlacedUtc, o.Total })
+    .ToListAsync();
+
+var hasMore = page.Count > pageSize;
+var items = page.Take(pageSize).ToList();
+var next = hasMore ? new OrderCursor(items[^1].PlacedUtc, items[^1].Id) : null;
+```
+
+<p>Support it with a matching composite index (Lesson 14):</p>
+
+```csharp
+modelBuilder.Entity<Order>()
+    .HasIndex(o => new { o.PlacedUtc, o.Id })
+    .IsDescending(true, true);                       // EF Core 7+
+```
+
+<div class="callout info"><span class="title">Encode the cursor</span>
+Return the cursor to clients as an opaque string, for example Base64 of the JSON <code>{"PlacedUtc":"…","Id":123}</code>. Clients can't tamper with its meaning, and you can change the format later.</div>
+
+<h3>Offset vs keyset</h3>
+<table>
+  <tr><th></th><th>Offset (Skip/Take)</th><th>Keyset (seek)</th></tr>
+  <tr><td>Deep page performance</td><td>Degrades linearly</td><td>Constant (with index)</td></tr>
+  <tr><td>Jump to arbitrary page</td><td>✅ Yes</td><td>❌ Only next/previous</td></tr>
+  <tr><td>Stable under inserts/deletes</td><td>❌ Drift</td><td>✅ Stable</td></tr>
+  <tr><td>Best for</td><td>Admin grids with page numbers, small tables</td><td>Infinite scroll, APIs, exports, large tables</td></tr>
+</table>
+
+<h2>Total counts</h2>
+<p>"Page 3 of 1,284" needs a <code>COUNT(*)</code>, which scans the whole filtered set on every request. Options:</p>
+<ul>
+  <li>Skip it. Show "next" and "previous" only, using the <code>Take(pageSize + 1)</code> trick.</li>
+  <li>Count only on the first page request and cache it.</li>
+  <li>Show an approximate count for huge tables.</li>
+</ul>
+
+```csharp
+var filtered = db.Orders.Where(o => o.Status == status);
+var total = await filtered.CountAsync();           // round trip 1
+var items = await filtered.OrderBy(o => o.Id).Skip(skip).Take(take).ToListAsync();  // round trip 2
+```
+
+<h2>Exercise</h2>
+<div class="exercise">
+  <h4>🛠 Compare the two</h4>
+  <ol>
+    <li>Seed 1,000,000 orders (use <code>ExecuteSql</code> with a set-based INSERT, or batch inserts, from Lesson 16).</li>
+    <li>Time offset pagination for pages 1, 1,000 and 40,000 (page size 25).</li>
+    <li>Implement keyset pagination on <code>(PlacedUtc, Id)</code> with the index above and time the same depth.</li>
+    <li>In SQL Server Management Studio or Azure Data Studio, look at the actual execution plans. Compare "rows read" in each.</li>
+  </ol>
+  <details><summary>What to expect</summary>
+  <p>Offset page 40,000 reads about 1M rows. Keyset reads about 25 using an index seek. Times typically differ by one or two orders of magnitude.</p>
+  </details>
+</div>
+
+<h2>Quiz</h2>
+
+:::quiz b
+Why does `Skip(100000).Take(20)` get slow on large tables?
+a) EF downloads all 100,020 rows
+b) The database still has to read and discard the skipped rows
+c) The query cache is bypassed
+d) OFFSET isn't supported by SQL Server
+> The database discards skipped rows server-side, but still has to read them. EF doesn't download them.
+:::
+
+:::quiz d
+What's required for keyset pagination to give consistent results?
+a) A clustered columnstore index
+b) `AsNoTracking()`
+c) A GUID primary key
+d) A unique, deterministic sort order (e.g. date + id) used in both the WHERE and ORDER BY
+> The cursor must identify a unique position, so include a unique tie-breaker column.
+:::
+
+:::quiz a
+What's the main downside of keyset pagination?
+a) You can't jump directly to an arbitrary page number
+b) It can't be indexed
+c) It always needs raw SQL
+d) It's slower for the first page
+> Keyset navigates relative to a cursor: next and previous only.
+:::
+
+<h2>Further reading</h2>
+<ul>
+  <li><a href="https://learn.microsoft.com/ef/core/querying/pagination" target="_blank" rel="noopener">Microsoft Learn: Pagination</a></li>
+  <li><a href="https://use-the-index-luke.com/no-offset" target="_blank" rel="noopener">Use The Index, Luke: No offset</a></li>
+</ul>

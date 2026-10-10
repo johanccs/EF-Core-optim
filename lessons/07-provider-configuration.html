@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Provider-Specific Configuration · EF Core Optimization Course</title>
+<meta name="description" content="Provider-Specific Configuration: a lesson from the EF Core Optimization Course.">
+<link rel="stylesheet" href="../assets/css/course.css">
+</head>
+<body data-lesson="7" data-root="../">
+<div class="layout">
+<nav id="sidebar" aria-label="Lessons"></nav>
+<main class="content">
+<article>
+<h1>Provider-Specific Configuration</h1>
+<p class="lead">EF Core's behaviour depends heavily on its database provider. Every option on the provider builder changes compatibility, translations, resiliency or performance. This lesson walks through the options for SQL Server/Azure SQL, PostgreSQL and SQLite that matter most.</p>
+<div class="meta"><span class="badge">⏱ 35 min</span></div>
+
+<div class="goal">
+  <span class="title">🎯 Goal of this lesson</span>
+  <p>Configure your <b>database provider deliberately</b> instead of accepting defaults: know which provider-level switches exist, what each one changes in the generated SQL or runtime behaviour, and which provider quirks to plan for.</p>
+  <p><b>Why it matters:</b> the same LINQ query can produce different SQL, or fail, depending on provider settings like the compatibility level or PostgreSQL version. Many production surprises, such as timestamp errors on PostgreSQL, unsupported functions on older SQL Server versions, or SQLite's limited ALTER TABLE support, are avoided by configuring the provider correctly from day one.</p>
+</div>
+
+<div class="objectives">
+  <h4>By the end of this lesson you will be able to</h4>
+  <ul>
+    <li>Use the provider options builder (<code>UseSqlServer(conn, sql =&gt; …)</code>) confidently.</li>
+    <li>Configure SQL Server and Azure SQL: compatibility level, timeouts, batching, retries, migrations.</li>
+    <li>Configure PostgreSQL with Npgsql: server version, enums, date/time behaviour, naming.</li>
+    <li>Know SQLite's main limitations and settings.</li>
+  </ul>
+</div>
+
+<h2>Two levels of options</h2>
+<p>EF configuration has <b>general</b> options on <code>DbContextOptionsBuilder</code> (logging, tracking behaviour, interceptors) and <b>provider</b> options inside the provider's own builder:</p>
+
+<pre><code class="language-csharp">options
+    .UseSqlServer(connStr, sql =&gt;            // ← provider options builder
+    {
+        sql.CommandTimeout(30);
+        sql.EnableRetryOnFailure();
+    })
+    .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking)   // ← general option
+    .AddInterceptors(new SlowQueryInterceptor());</code></pre>
+
+<h2>SQL Server and Azure SQL</h2>
+
+<pre><code class="language-csharp">options.UseSqlServer(connStr, sql =&gt;
+{
+    sql.CommandTimeout(30);                                       // seconds per command
+    sql.EnableRetryOnFailure(5, TimeSpan.FromSeconds(10), null);  // transient fault handling (Lesson 17)
+    sql.MaxBatchSize(100);                                        // statements per SaveChanges round trip (Lesson 16)
+    sql.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);   // Lesson 15
+    sql.UseCompatibilityLevel(160);                               // match your server (160 = SQL Server 2022)
+    sql.MigrationsAssembly(&quot;Shop.Migrations&quot;);                    // Lesson 5
+    sql.MigrationsHistoryTable(&quot;__EFMigrationsHistory&quot;, &quot;dbo&quot;);
+});
+
+// EF 9+: target Azure SQL explicitly instead of on-premises SQL Server
+options.UseAzureSql(connStr, sql =&gt; sql.EnableRetryOnFailure());</code></pre>
+
+<table>
+  <tr><th>Option</th><th>Effect</th></tr>
+  <tr><td><code>UseCompatibilityLevel(n)</code></td><td>Tells EF which SQL features it may use. For example, <code>OPENJSON</code>-based translations need level 130+. If your database runs at an older level than EF assumes, some queries fail at runtime with syntax errors. Set it to your <b>database's</b> compatibility level.</td></tr>
+  <tr><td><code>CommandTimeout(s)</code></td><td>The maximum duration per command (default 30 s). Raise it for specific long operations with <code>db.Database.SetCommandTimeout(...)</code> rather than globally.</td></tr>
+  <tr><td><code>EnableRetryOnFailure</code></td><td>Retries known transient errors. Essential on Azure SQL. Changes how manual transactions must be written.</td></tr>
+  <tr><td><code>MaxBatchSize</code> / <code>MinBatchSize</code></td><td>Tune SaveChanges batching. Leave the defaults unless you've measured.</td></tr>
+  <tr><td><code>UseParameterizedCollectionMode</code> (EF 10)</td><td>How <code>Contains</code> over a collection is translated (Lesson 21).</td></tr>
+  <tr><td><code>UseAzureSql</code> (EF 9+)</td><td>Enables Azure-SQL-specific defaults and features.</td></tr>
+</table>
+
+<div class="callout new"><span class="title">Newer SQL Server features</span>
+EF 10 adds support for the native <code>json</code> data type and the <code>vector</code> type (for AI similarity search) available in Azure SQL and SQL Server 2025. Whether EF uses them depends on the provider configuration and the compatibility level. Check the EF 10 release notes before enabling them on an existing database.</div>
+
+<h2>PostgreSQL (Npgsql)</h2>
+
+<pre><code class="language-csharp">var dsb = new NpgsqlDataSourceBuilder(connStr);
+var dataSource = dsb.Build();
+
+builder.Services.AddDbContext&lt;ShopContext&gt;(o =&gt; o
+    .UseNpgsql(dataSource, npg =&gt;
+    {
+        npg.SetPostgresVersion(16, 0);              // allow SQL features of your server version
+        npg.EnableRetryOnFailure();
+        npg.MapEnum&lt;OrderStatus&gt;(&quot;order_status&quot;);   // native PostgreSQL enum (Npgsql EF 9+)
+        npg.CommandTimeout(30);
+    })
+    .UseSnakeCaseNamingConvention());               // EFCore.NamingConventions package</code></pre>
+
+<table>
+  <tr><th>Topic</th><th>What to know</th></tr>
+  <tr><td><b>Date/time</b></td><td>Since Npgsql 6, <code>DateTime</code> maps to <code>timestamp with time zone</code>, and writing a <code>DateTime</code> whose <code>Kind</code> isn't <code>Utc</code> throws. Store UTC everywhere (<code>DateTime.UtcNow</code>). Use <code>timestamp without time zone</code> only for genuinely local times. Consider NodaTime (<code>npg.UseNodaTime()</code>) for precise date/time semantics.</td></tr>
+  <tr><td><b>Naming</b></td><td>PostgreSQL folds unquoted identifiers to lower case. Snake-case naming (<code>order_lines.unit_price</code>) makes hand-written SQL much nicer.</td></tr>
+  <tr><td><b>Server version</b></td><td><code>SetPostgresVersion</code> lets EF use newer SQL features. Set it to the oldest version you deploy to.</td></tr>
+  <tr><td><b>Types</b></td><td>Native arrays, <code>jsonb</code>, ranges and full-text search are first-class. Index them with GIN or GiST indexes, configured with <code>HasMethod("gin")</code>.</td></tr>
+  <tr><td><b>Concurrency</b></td><td>Use the <code>xmin</code> system column as a row version (Lesson 17).</td></tr>
+</table>
+
+<h2>SQLite</h2>
+
+<pre><code class="language-csharp">options.UseSqlite(&quot;Data Source=shop.db&quot;, sqlite =&gt; sqlite.CommandTimeout(30));</code></pre>
+<ul>
+  <li><b>Limited ALTER TABLE</b>: many schema changes require rebuilding the table. EF's migrations do this automatically, but review them on large tables.</li>
+  <li><b>Type affinity</b>: SQLite has few native types. <code>decimal</code>, <code>DateTimeOffset</code> and <code>TimeSpan</code> are stored as text or integers, and some comparisons or orderings on them can't be translated. Plan value converters if you query on them.</li>
+  <li><b>Concurrency</b>: one writer at a time. WAL journal mode (<code>PRAGMA journal_mode=WAL;</code>) lets readers proceed during writes. Check the current mode with <code>PRAGMA journal_mode;</code>.</li>
+  <li><b>In-memory databases</b> (<code>Data Source=:memory:</code>) live only as long as their connection stays open. That matters for tests (Lesson 9).</li>
+</ul>
+
+<h2>Supporting several providers</h2>
+<p>If the same model must run on more than one database (for example SQL Server in production and SQLite for a desktop edition):</p>
+<ul>
+  <li>Generate <b>separate migration sets per provider</b>, each in its own assembly (<code>MigrationsAssembly</code>), because migrations contain provider-specific SQL and types.</li>
+  <li>Keep provider-specific model configuration behind <code>Database.IsSqlServer()</code> / <code>IsNpgsql()</code> checks in <code>OnModelCreating</code>.</li>
+  <li>Test against <b>every</b> provider you ship. Translation differences are real.</li>
+</ul>
+
+<h2>Exercise</h2>
+<div class="exercise">
+  <h4>🛠 Provider tune-up</h4>
+  <ol>
+    <li>Run <code>SELECT compatibility_level FROM sys.databases WHERE name = DB_NAME()</code> and set <code>UseCompatibilityLevel</code> to match.</li>
+    <li>Set <code>UseCompatibilityLevel(120)</code> and run <code>db.Orders.Where(o =&gt; ids.Contains(o.Id))</code> with a parameterized collection mode. Compare the SQL with level 160. What changed and why?</li>
+    <li>If you have PostgreSQL, insert an order with <code>DateTime.Now</code> into a <code>timestamptz</code> column and read the exception. Fix it with <code>DateTime.UtcNow</code>.</li>
+  </ol>
+  <details><summary>What you should see</summary>
+  <p>At compatibility level 120, EF can't use <code>OPENJSON</code>, so translations that rely on it fall back to other forms, such as inlined values. With Npgsql, writing a <code>Local</code> <code>DateTime</code> to <code>timestamptz</code> throws an exception explaining that only UTC is supported.</p>
+  </details>
+</div>
+
+<h2>Quiz</h2>
+
+<div class="quiz" data-answer="b">
+<p class="q">Why set <code>UseCompatibilityLevel</code> on SQL Server?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. To enable retries</button>
+<button class="opt" type="button" data-opt="b">B. So EF only generates SQL features your database's compatibility level supports</button>
+<button class="opt" type="button" data-opt="c">C. To speed up migrations</button>
+<button class="opt" type="button" data-opt="d">D. To enable MARS</button>
+</div>
+<p class="explain">EF picks translations (e.g. OPENJSON) based on the configured level. A mismatch causes runtime SQL errors.</p>
+</div>
+
+<div class="quiz" data-answer="d">
+<p class="q">With Npgsql 6+, what happens when you save <code>DateTime.Now</code> into a <code>timestamptz</code> column?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. It's silently converted to UTC</button>
+<button class="opt" type="button" data-opt="b">B. It's stored as local time</button>
+<button class="opt" type="button" data-opt="c">C. It's truncated to the date</button>
+<button class="opt" type="button" data-opt="d">D. An exception is thrown, because only UTC DateTime values are allowed for timestamptz</button>
+</div>
+<p class="explain">Npgsql enforces UTC for timestamptz to prevent silent time-zone bugs.</p>
+</div>
+
+<div class="quiz" data-answer="a">
+<p class="q">You support SQL Server and SQLite with the same model. How should migrations be organized?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. One migration set per provider, each in its own assembly</button>
+<button class="opt" type="button" data-opt="b">B. One shared migration set</button>
+<button class="opt" type="button" data-opt="c">C. Migrations aren't supported with SQLite</button>
+<button class="opt" type="button" data-opt="d">D. Use EnsureCreated for both</button>
+</div>
+<p class="explain">Migrations contain provider-specific SQL and types, so maintain one set per provider.</p>
+</div>
+
+<h2>Further reading</h2>
+<ul>
+  <li><a href="https://learn.microsoft.com/ef/core/providers/sql-server/" target="_blank" rel="noopener">SQL Server provider</a></li>
+  <li><a href="https://www.npgsql.org/efcore/" target="_blank" rel="noopener">Npgsql EF Core provider</a></li>
+  <li><a href="https://www.npgsql.org/doc/types/datetime.html" target="_blank" rel="noopener">Npgsql: Date and time handling</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/providers/sqlite/limitations" target="_blank" rel="noopener">SQLite provider limitations</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/managing-schemas/migrations/providers" target="_blank" rel="noopener">Migrations with multiple providers</a></li>
+</ul>
+</article>
+<nav id="pager" aria-label="Lesson navigation"></nav>
+</main>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="../assets/js/course.js"></script>
+<script src="../assets/js/ai-assistant.js"></script>
+</body>
+</html>

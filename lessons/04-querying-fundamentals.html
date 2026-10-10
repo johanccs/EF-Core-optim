@@ -16,6 +16,12 @@
 <p class="lead">Knowing where a query runs is the foundation of EF Core performance: in the database, or in your application's memory. This lesson covers deferred execution, <code>IQueryable</code> versus <code>IEnumerable</code>, client evaluation and async.</p>
 <div class="meta"><span class="badge">⏱ 30 min</span></div>
 
+<div class="goal">
+  <span class="title">🎯 Goal of this lesson</span>
+  <p>Understand <b>where and when a query runs</b>: in the database or in memory, now or later, and choose LINQ operators that keep the work on the database server.</p>
+  <p><b>Why it matters:</b> One misplaced <code>ToList()</code> or <code>IEnumerable</code> can turn a 1-row query into a full table download. This is the most common and most expensive beginner mistake.</p>
+</div>
+
 <div class="objectives">
   <h4>By the end of this lesson you will be able to</h4>
   <ul>
@@ -121,7 +127,7 @@ With <code>Microsoft.Data.SqlClient</code>, reading very large text or binary co
 {
     await exporter.WriteAsync(order);     // one row in memory at a time
 }</code></pre>
-<p>Streaming keeps the connection open for the whole loop. Keep the loop body fast, and don't run other queries on the same context inside it unless MARS is enabled. Streaming with tracking still accumulates entities in the change tracker, so use <code>AsNoTracking()</code> (next lesson).</p>
+<p>Streaming keeps the connection open for the whole loop. Keep the loop body fast, and don't run other queries on the same context inside it unless MARS is enabled. Streaming with tracking still accumulates entities in the change tracker, so use <code>AsNoTracking()</code> (Lesson 10).</p>
 
 <h2>Exercise</h2>
 <div class="exercise">
@@ -193,5 +199,6 @@ var total  = await db.Orders.Where(o =&gt; o.Status == OrderStatus.Paid)
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="../assets/js/course.js"></script>
+<script src="../assets/js/ai-assistant.js"></script>
 </body>
 </html>

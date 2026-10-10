@@ -2,12 +2,18 @@
 <p class="lead">You can't optimize what you don't understand. This lesson walks through what EF Core does between your LINQ query and the database, and shows where the time goes.</p>
 <div class="meta"><span class="badge">⏱ 20 min</span></div>
 
+<div class="goal">
+  <span class="title">🎯 Goal of this lesson</span>
+  <p>Build an accurate <b>mental model of what EF Core does</b> between your LINQ code and the database, and learn the six places where time is spent, so every later optimization has a clear reason.</p>
+  <p><b>Why it matters:</b> You can't fix what you can't explain. Developers who understand the query pipeline and change tracker spot performance problems by reading code. Everyone else finds them in production.</p>
+</div>
+
 <div class="objectives">
   <h4>By the end of this lesson you will be able to</h4>
   <ul>
     <li>Explain the roles of <code>DbContext</code>, <code>DbSet&lt;T&gt;</code>, the model and the change tracker.</li>
     <li>Describe the query pipeline: LINQ → expression tree → SQL → materialization.</li>
-    <li>Name the five main cost centres of EF Core performance.</li>
+    <li>Name the six main cost centres of EF Core performance.</li>
     <li>Set up the sample <code>ShopContext</code> used throughout this course.</li>
   </ul>
 </div>
@@ -92,11 +98,11 @@ public class ShopContext : DbContext
 <h2>The key building blocks</h2>
 <table>
   <tr><th>Piece</th><th>What it does</th><th>Performance relevance</th></tr>
-  <tr><td><b>Model</b> (<code>IModel</code>)</td><td>EF's metadata about entities, keys, relationships and column mappings. Built once per context type, then cached.</td><td>Building the model is expensive with hundreds of entities. That's a startup cost (Lesson 17).</td></tr>
-  <tr><td><b>DbContext</b></td><td>A unit of work: holds a connection, a change tracker and services. Meant to be <b>short-lived</b>.</td><td>Creating one is cheap but not free. Pooling helps at high throughput (Lesson 15).</td></tr>
+  <tr><td><b>Model</b> (<code>IModel</code>)</td><td>EF's metadata about entities, keys, relationships and column mappings. Built once per context type, then cached.</td><td>Building the model is expensive with hundreds of entities. That's a startup cost (Lesson 22).</td></tr>
+  <tr><td><b>DbContext</b></td><td>A unit of work: holds a connection, a change tracker and services. Meant to be <b>short-lived</b>.</td><td>Creating one is cheap but not free. Pooling helps at high throughput (Lesson 20).</td></tr>
   <tr><td><b>DbSet&lt;T&gt;</b></td><td>The entry point for querying and adding entities of type <code>T</code>.</td><td>It's an <code>IQueryable&lt;T&gt;</code>, so nothing runs until you enumerate it.</td></tr>
-  <tr><td><b>Change tracker</b></td><td>Remembers every entity a context loaded or attached, plus a snapshot of its original values.</td><td>Costs memory and CPU on every query and every <code>SaveChanges</code> (Lesson 5).</td></tr>
-  <tr><td><b>Query pipeline</b></td><td>Turns a LINQ expression tree into SQL and turns rows back into objects.</td><td>Query compilation is cached. Cache misses are costly (Lesson 16).</td></tr>
+  <tr><td><b>Change tracker</b></td><td>Remembers every entity a context loaded or attached, plus a snapshot of its original values.</td><td>Costs memory and CPU on every query and every <code>SaveChanges</code> (Lesson 10).</td></tr>
+  <tr><td><b>Query pipeline</b></td><td>Turns a LINQ expression tree into SQL and turns rows back into objects.</td><td>Query compilation is cached. Cache misses are costly (Lesson 21).</td></tr>
 </table>
 
 <h2>The life of a query</h2>
@@ -129,15 +135,16 @@ ORDER BY [o].[PlacedUtc] DESC
 <div class="callout tip"><span class="title">Rule of thumb</span>
 In most applications the database dominates: round trips, rows scanned, rows transferred. Fix data access patterns first (what you fetch and how many queries you send). Micro-optimize EF itself last.</div>
 
-<h2>The five cost centres</h2>
+<h2>The six cost centres</h2>
 <p>Almost every EF Core performance problem falls into one of these buckets. The rest of the course is organized around them.</p>
 <table>
   <tr><th>#</th><th>Cost centre</th><th>Typical symptom</th><th>Lessons</th></tr>
-  <tr><td>1</td><td><b>Too many round trips</b></td><td>N+1 queries, saving in a loop, lazy loading in loops</td><td>7, 11</td></tr>
-  <tr><td>2</td><td><b>Too much data</b></td><td>Fetching all columns or rows, client-side filtering, cartesian explosion</td><td>4, 6, 8, 10</td></tr>
-  <tr><td>3</td><td><b>Inefficient SQL / missing indexes</b></td><td>Table scans, bad plans, offset paging on big tables</td><td>8, 9, 13, 14</td></tr>
-  <tr><td>4</td><td><b>EF in-process overhead</b></td><td>Tracking you don't need, query cache misses, context allocation</td><td>5, 15, 16</td></tr>
-  <tr><td>5</td><td><b>Startup cost</b></td><td>Slow first request, large models</td><td>17</td></tr>
+  <tr><td>1</td><td><b>Too many round trips</b></td><td>N+1 queries, saving in a loop, lazy loading in loops</td><td>12, 16</td></tr>
+  <tr><td>2</td><td><b>Too much data</b></td><td>Fetching all columns or rows, client-side filtering, cartesian explosion</td><td>4, 11, 13, 15</td></tr>
+  <tr><td>3</td><td><b>Inefficient SQL / missing indexes</b></td><td>Table scans, bad plans, offset paging on big tables</td><td>13, 14, 18, 19</td></tr>
+  <tr><td>4</td><td><b>EF in-process overhead</b></td><td>Tracking you don't need, query cache misses, context allocation</td><td>10, 20, 21</td></tr>
+  <tr><td>5</td><td><b>Startup cost</b></td><td>Slow first request, large models</td><td>22</td></tr>
+  <tr><td>6</td><td><b>Misconfiguration</b></td><td>Wrong lifetimes, debug options in production, untuned providers, missing retries</td><td>2, 5–9</td></tr>
 </table>
 
 <h2>The unit-of-work pattern</h2>
@@ -194,7 +201,7 @@ for (int c = 0; c < 1000; c++)
     }
     db.Customers.Add(customer);
 }
-await db.SaveChangesAsync();   // EF batches these inserts. Lesson 11 explains how.
+await db.SaveChangesAsync();   // EF batches these inserts. Lesson 16 explains how.
 ```
   </details>
 </div>
@@ -225,7 +232,7 @@ a) Captured variables are sent as SQL parameters, so the query shape is unchange
 b) EF caches results, not queries
 c) SQL Server caches the result set
 d) It isn't a cache hit. Each value compiles a new query.
-> Closure variables become parameters (`@__customerId_0`). Lesson 16 shows how constants can break this.
+> Closure variables become parameters (`@__customerId_0`). Lesson 21 shows how constants can break this.
 :::
 
 <h2>Further reading</h2>

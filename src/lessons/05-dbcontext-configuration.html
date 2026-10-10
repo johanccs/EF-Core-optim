@@ -1,0 +1,226 @@
+<h1>DbContext Configuration in Depth</h1>
+<p class="lead">Lesson 2 got you running. This lesson explains how a DbContext actually receives its configuration, so you can set it up correctly in web apps, background workers, the <code>dotnet ef</code> tools and tests.</p>
+<div class="meta"><span class="badge">⏱ 35 min</span></div>
+
+<div class="goal">
+  <span class="title">🎯 Goal of this lesson</span>
+  <p>Understand <b>every path by which configuration reaches a DbContext</b>: dependency injection, <code>OnConfiguring</code>, factories, strongly-typed options and design-time factories. Then choose the right one for each kind of application.</p>
+  <p><b>Why it matters:</b> most "it works on my machine" EF problems are configuration problems. Typical examples are a context created without a provider, settings applied in two places that override each other, migrations that can't find the context, and lifetimes that leak state. Once you can see the whole configuration pipeline, these become easy to diagnose.</p>
+</div>
+
+<div class="objectives">
+  <h4>By the end of this lesson you will be able to</h4>
+  <ul>
+    <li>Explain how <code>DbContextOptions&lt;T&gt;</code> is built and in what order configuration runs.</li>
+    <li>Pick between <code>AddDbContext</code>, <code>OnConfiguring</code>, <code>AddDbContextFactory</code> and manual construction.</li>
+    <li>Bind database settings from <code>appsettings.json</code> with validated, strongly-typed options.</li>
+    <li>Configure several DbContexts in one application, each with its own migrations.</li>
+    <li>Make the <code>dotnet ef</code> tools work with <code>IDesignTimeDbContextFactory&lt;T&gt;</code>.</li>
+  </ul>
+</div>
+
+<h2>The configuration pipeline</h2>
+<p>A DbContext is configured through a <code>DbContextOptionsBuilder</code>. The finished, immutable <code>DbContextOptions&lt;TContext&gt;</code> holds the provider (SQL Server, PostgreSQL…), the connection, logging, interceptors and behaviour switches. Configuration can come from two places:</p>
+<ol>
+  <li><b>Outside the context</b>: the delegate passed to <code>AddDbContext</code>, or a <code>DbContextOptionsBuilder</code> you build yourself and pass to the constructor.</li>
+  <li><b>Inside the context</b>: the <code>OnConfiguring</code> override, which runs <b>after</b> the external options are applied, every time a context instance is initialized.</li>
+</ol>
+
+```csharp
+public class ShopContext : DbContext
+{
+    public ShopContext(DbContextOptions<ShopContext> options) : base(options) { }
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        // Only fall back to a local database if nobody configured us from outside
+        if (!optionsBuilder.IsConfigured)
+        {
+            optionsBuilder.UseSqlite("Data Source=shop-dev.db");
+        }
+    }
+}
+```
+
+<div class="callout warn"><span class="title">Two sources, one winner</span>
+If both <code>AddDbContext</code> and <code>OnConfiguring</code> set the same option, <code>OnConfiguring</code> runs last and wins. Guard any fallback configuration in <code>OnConfiguring</code> with <code>IsConfigured</code>, or, better, don't use <code>OnConfiguring</code> at all in applications that use DI.</div>
+
+<h2>Choosing how to configure</h2>
+<table>
+  <tr><th>Approach</th><th>When to use</th><th>Lifetime</th></tr>
+  <tr><td><code>AddDbContext&lt;T&gt;</code></td><td>ASP.NET Core and most hosted apps: one context per request or scope</td><td>Scoped (default)</td></tr>
+  <tr><td><code>AddDbContextFactory&lt;T&gt;</code></td><td>Blazor Server, background services, parallel work, any code that needs several short-lived contexts</td><td>You control it: <code>await using var db = factory.CreateDbContext()</code></td></tr>
+  <tr><td><code>AddDbContextPool&lt;T&gt;</code> / <code>AddPooledDbContextFactory&lt;T&gt;</code></td><td>High-throughput services (Lesson 20)</td><td>Pooled instances</td></tr>
+  <tr><td><code>OnConfiguring</code> only</td><td>Small console tools, samples, quick prototypes</td><td><code>new ShopContext()</code></td></tr>
+  <tr><td>Manual <code>DbContextOptionsBuilder</code></td><td>Tests, benchmarks, tools without DI</td><td><code>new ShopContext(options)</code></td></tr>
+</table>
+
+<h3>Resolving services while configuring</h3>
+<p>The overload of <code>AddDbContext</code> that takes the <code>IServiceProvider</code> lets you pull interceptors, configuration or environment information from DI:</p>
+
+```csharp
+builder.Services.AddSingleton<SlowQueryInterceptor>();
+
+builder.Services.AddDbContext<ShopContext>((sp, options) =>
+{
+    var db = sp.GetRequiredService<IOptions<DatabaseOptions>>().Value;
+    options.UseSqlServer(db.ConnectionString, sql => sql.CommandTimeout(db.CommandTimeoutSeconds))
+           .AddInterceptors(sp.GetRequiredService<SlowQueryInterceptor>());
+});
+```
+
+<h2>Strongly-typed, validated settings</h2>
+<p>Scattering <code>Configuration["..."]</code> lookups and magic numbers through <code>Program.cs</code> makes configuration hard to review and easy to break. Bind a settings class once, validate it, and <b>fail at startup</b> instead of at the first query:</p>
+
+```json label="appsettings.json"
+{
+  "Database": {
+    "ConnectionString": "Server=.;Database=Shop;Trusted_Connection=True;TrustServerCertificate=True",
+    "CommandTimeoutSeconds": 30,
+    "MaxRetryCount": 5,
+    "EnableSensitiveDataLogging": false
+  }
+}
+```
+
+```csharp label="DatabaseOptions.cs"
+public sealed class DatabaseOptions
+{
+    public const string Section = "Database";
+
+    [Required] public string ConnectionString { get; init; } = "";
+    [Range(1, 600)] public int CommandTimeoutSeconds { get; init; } = 30;
+    [Range(0, 10)] public int MaxRetryCount { get; init; } = 5;
+    public bool EnableSensitiveDataLogging { get; init; }
+}
+```
+
+```csharp label="Program.cs"
+builder.Services.AddOptions<DatabaseOptions>()
+    .Bind(builder.Configuration.GetSection(DatabaseOptions.Section))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();                              // app refuses to start with bad settings
+
+builder.Services.AddDbContext<ShopContext>((sp, options) =>
+{
+    var db = sp.GetRequiredService<IOptions<DatabaseOptions>>().Value;
+    options.UseSqlServer(db.ConnectionString, sql =>
+    {
+        sql.CommandTimeout(db.CommandTimeoutSeconds);
+        if (db.MaxRetryCount > 0) sql.EnableRetryOnFailure(db.MaxRetryCount);
+    });
+    if (db.EnableSensitiveDataLogging) options.EnableSensitiveDataLogging();
+});
+```
+
+<div class="callout tip"><span class="title">Keep secrets out of appsettings.json</span>
+The example above shows the shape of the settings. The real connection string, especially one containing a password, belongs in user-secrets, environment variables or a vault. Lesson 6 covers this.</div>
+
+<h2>Multiple DbContexts</h2>
+<p>Large applications often split the model into several contexts, for example one per bounded context (Sales, Catalog, Identity). Smaller contexts build faster and keep teams independent. Each context can have its own schema and migrations history:</p>
+
+```csharp
+builder.Services.AddDbContext<SalesContext>(o => o.UseSqlServer(connStr,
+    sql => sql.MigrationsHistoryTable("__EFMigrationsHistory", "sales")));
+
+builder.Services.AddDbContext<CatalogContext>(o => o.UseSqlServer(connStr,
+    sql => sql.MigrationsHistoryTable("__EFMigrationsHistory", "catalog")));
+
+public class SalesContext(DbContextOptions<SalesContext> options) : DbContext(options)
+{
+    protected override void OnModelCreating(ModelBuilder b) => b.HasDefaultSchema("sales");
+}
+```
+
+```bash
+dotnet ef migrations add InitialSales   --context SalesContext   --output-dir Migrations/Sales
+dotnet ef migrations add InitialCatalog --context CatalogContext --output-dir Migrations/Catalog
+```
+<div class="callout warn"><span class="title">Use the generic options type</span>
+With more than one context, each constructor must take <code>DbContextOptions&lt;TContext&gt;</code> for its <i>own</i> type, not the non-generic <code>DbContextOptions</code>. Otherwise DI can hand one context the other context's options.</div>
+
+<h2>Design-time configuration (dotnet ef)</h2>
+<p>Commands like <code>dotnet ef migrations add</code> need to create your context <b>without running your app normally</b>. The tools try, in order:</p>
+<ol>
+  <li>An <code>IDesignTimeDbContextFactory&lt;TContext&gt;</code> implementation in the project.</li>
+  <li>The application's host: they call your <code>Program</code> and read the context from its service provider.</li>
+  <li>A parameterless constructor on the context.</li>
+</ol>
+<p>When startup does things the tools can't handle (it needs secrets, connects to other services, or lives in another project), add a design-time factory:</p>
+
+```csharp
+public class ShopContextDesignTimeFactory : IDesignTimeDbContextFactory<ShopContext>
+{
+    public ShopContext CreateDbContext(string[] args)
+    {
+        var options = new DbContextOptionsBuilder<ShopContext>()
+            .UseSqlServer(Environment.GetEnvironmentVariable("SHOP_DESIGNTIME_CONNECTION")
+                          ?? "Server=.;Database=Shop;Trusted_Connection=True;TrustServerCertificate=True",
+                          sql => sql.MigrationsAssembly("Shop.Migrations"))
+            .Options;
+        return new ShopContext(options);
+    }
+}
+```
+<p><code>MigrationsAssembly</code> tells EF to store migrations in a separate project. That's useful for keeping migrations out of the domain assembly, or for maintaining separate migration sets per provider.</p>
+
+<h2>Common configuration errors decoded</h2>
+<table>
+  <tr><th>Error message</th><th>Usual cause</th></tr>
+  <tr><td>No database provider has been configured for this DbContext</td><td>The context was created with <code>new</code> without options, or <code>OnConfiguring</code> doesn't call <code>UseXxx</code>.</td></tr>
+  <tr><td>Unable to create a DbContext of type '…' at design time</td><td>The tools can't build your host. Add an <code>IDesignTimeDbContextFactory</code>.</td></tr>
+  <tr><td>Cannot consume scoped service 'ShopContext' from singleton '…'</td><td>A singleton (often a hosted service) injects the context. Use a factory.</td></tr>
+  <tr><td>A second operation was started on this context instance…</td><td>Concurrent use of one context, such as <code>Task.WhenAll</code> or a missing <code>await</code>.</td></tr>
+  <tr><td>The DbContextOptions passed to the X constructor must be a DbContextOptions&lt;X&gt;</td><td>Multiple contexts using the non-generic options type.</td></tr>
+</table>
+
+<h2>Exercise</h2>
+<div class="exercise">
+  <h4>🛠 Production-grade configuration</h4>
+  <ol>
+    <li>Create <code>DatabaseOptions</code>, bind it with <code>ValidateOnStart</code>, and configure <code>ShopContext</code> from it.</li>
+    <li>Delete the <code>CommandTimeoutSeconds</code> value, set it to <code>0</code>, and start the app. Confirm it refuses to start, with a clear message.</li>
+    <li>Split out a small <code>CatalogContext</code> (Products, Categories) with its own schema and history table, and create a migration for each context.</li>
+    <li>Add a design-time factory and run <code>dotnet ef dbcontext info --context ShopContext</code>.</li>
+  </ol>
+  <details><summary>What you should see</summary>
+  <p>With an invalid value the host throws <code>OptionsValidationException</code> at startup, naming the failing property. That's much better than a timeout exception at 3 a.m. <code>dotnet ef dbcontext info</code> prints the provider, database name and options in use. It's a quick way to confirm which configuration the tools picked up.</p>
+  </details>
+</div>
+
+<h2>Quiz</h2>
+
+:::quiz b
+Both `AddDbContext` and `OnConfiguring` set a command timeout. Which value is used?
+a) The `AddDbContext` value
+b) The `OnConfiguring` value, because it runs after the external options
+c) The smaller of the two
+d) EF throws an exception
+> OnConfiguring runs last. Guard fallbacks with `optionsBuilder.IsConfigured`.
+:::
+
+:::quiz d
+What does `ValidateOnStart()` give you for database settings?
+a) Faster queries
+b) Automatic retries
+c) Encryption of the connection string
+d) The app fails at startup with a clear error instead of failing at the first database call
+> Fail fast: configuration errors surface during deployment, not under user traffic.
+:::
+
+:::quiz a
+When do the `dotnet ef` tools use an `IDesignTimeDbContextFactory<T>`?
+a) Whenever one exists. It takes precedence over building your application host.
+b) Never in .NET 10
+c) Only for SQLite
+d) Only when running the app
+> The factory is checked first, which makes design-time creation independent of your app's startup code.
+:::
+
+<h2>Further reading</h2>
+<ul>
+  <li><a href="https://learn.microsoft.com/ef/core/dbcontext-configuration/" target="_blank" rel="noopener">DbContext lifetime, configuration and initialization</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/cli/dbcontext-creation" target="_blank" rel="noopener">Design-time DbContext creation</a></li>
+  <li><a href="https://learn.microsoft.com/dotnet/core/extensions/options" target="_blank" rel="noopener">Options pattern in .NET</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/managing-schemas/migrations/projects" target="_blank" rel="noopener">Using a separate migrations project</a></li>
+</ul>

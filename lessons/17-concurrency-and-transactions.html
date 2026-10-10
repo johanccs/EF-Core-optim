@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Concurrency, Transactions &amp;amp; Resiliency · EF Core Optimization Course</title>
+<meta name="description" content="Concurrency, Transactions &amp;amp; Resiliency: a lesson from the EF Core Optimization Course.">
+<link rel="stylesheet" href="../assets/css/course.css">
+</head>
+<body data-lesson="17" data-root="../">
+<div class="layout">
+<nav id="sidebar" aria-label="Lessons"></nav>
+<main class="content">
+<article>
+<h1>Concurrency, Transactions &amp; Resiliency</h1>
+<p class="lead">Fast code that loses updates or falls over on a transient network blip isn't production-ready. This lesson covers optimistic concurrency, transaction scope and isolation, and connection resiliency, all with performance in mind.</p>
+<div class="meta"><span class="badge">⏱ 35 min</span></div>
+
+<div class="goal">
+  <span class="title">🎯 Goal of this lesson</span>
+  <p>Learn to keep data <b>correct under concurrency and failures</b> without sacrificing throughput: optimistic concurrency, short transactions and connection resiliency.</p>
+  <p><b>Why it matters:</b> Fast code that loses updates or crashes on a transient network error isn't production-ready. These patterns protect data integrity while avoiding costly locks.</p>
+</div>
+
+<div class="objectives">
+  <h4>By the end of this lesson you will be able to</h4>
+  <ul>
+    <li>Implement optimistic concurrency with row versions and concurrency tokens.</li>
+    <li>Resolve <code>DbUpdateConcurrencyException</code> correctly.</li>
+    <li>Use explicit transactions, and keep them short.</li>
+    <li>Configure retry-on-failure and combine it correctly with user transactions.</li>
+  </ul>
+</div>
+
+<h2>Optimistic concurrency</h2>
+<p>Pessimistic locking (holding locks while a user edits) kills throughput. EF uses <b>optimistic concurrency</b>: it assumes conflicts are rare, includes a version check in the <code>UPDATE</code>, and throws if someone else changed the row first.</p>
+
+<pre><code class="language-csharp">public class Product
+{
+    // ...
+    [Timestamp]                                  // SQL Server rowversion
+    public byte[] RowVersion { get; set; } = null!;
+}
+
+// or Fluent API
+modelBuilder.Entity&lt;Product&gt;().Property(p =&gt; p.RowVersion).IsRowVersion();</code></pre>
+
+<pre data-label="Generated UPDATE"><code class="language-sql">UPDATE [Products] SET [Price] = @p0
+OUTPUT INSERTED.[RowVersion]
+WHERE [Id] = @p1 AND [RowVersion] = @p2;</code></pre>
+<p>If zero rows are affected, EF throws <code>DbUpdateConcurrencyException</code>.</p>
+
+<div class="callout info"><span class="title">Other providers</span>
+<ul>
+<li><b>PostgreSQL</b>: map the system column <code>xmin</code>: <code>b.Property&lt;uint&gt;("Version").IsRowVersion();</code> (Npgsql 7+).</li>
+<li><b>SQLite and others</b>: use a regular column as a concurrency token, <code>.IsConcurrencyToken()</code>, and update it yourself (e.g. a <code>Guid Version</code> you regenerate on each save).</li>
+</ul></div>
+
+<h3>Handling conflicts</h3>
+
+<pre><code class="language-csharp">var saved = false;
+while (!saved)
+{
+    try
+    {
+        await db.SaveChangesAsync();
+        saved = true;
+    }
+    catch (DbUpdateConcurrencyException ex)
+    {
+        foreach (var entry in ex.Entries)
+        {
+            var dbValues = await entry.GetDatabaseValuesAsync();
+            if (dbValues is null) throw;                         // row was deleted
+
+            // Strategy A, &quot;client wins&quot;: refresh the original values, keep ours
+            entry.OriginalValues.SetValues(dbValues);
+
+            // Strategy B, &quot;database wins&quot;: entry.CurrentValues.SetValues(dbValues);
+            // Strategy C: merge property-by-property, or return 409 Conflict to the user
+        }
+    }
+}</code></pre>
+<p>In web APIs, the usual pattern is to send the <code>RowVersion</code> to the client and back with the edit, set it as the original value, and return <b>409 Conflict</b> when it fails:</p>
+
+<pre><code class="language-csharp">var product = await db.Products.SingleAsync(p =&gt; p.Id == dto.Id);
+db.Entry(product).Property(p =&gt; p.RowVersion).OriginalValue = dto.RowVersion;
+product.Price = dto.Price;
+try { await db.SaveChangesAsync(); }
+catch (DbUpdateConcurrencyException) { return Results.Conflict(); }</code></pre>
+
+<h2>Transactions</h2>
+<p>Each <code>SaveChanges</code> call is already atomic. Use an explicit transaction only when <b>several operations</b> must succeed or fail together: multiple SaveChanges calls, <code>ExecuteUpdate</code> combined with SaveChanges, or raw SQL.</p>
+
+<pre><code class="language-csharp">await using var tx = await db.Database.BeginTransactionAsync();
+
+await db.Orders.Where(o =&gt; o.Id == orderId)
+               .ExecuteUpdateAsync(s =&gt; s.SetProperty(o =&gt; o.Status, OrderStatus.Paid));
+db.Payments.Add(new Payment { OrderId = orderId, Amount = amount });
+await db.SaveChangesAsync();
+
+await tx.CommitAsync();           // disposing without commit = rollback</code></pre>
+
+<div class="callout warn"><span class="title">Keep transactions short</span>
+Locks are held until commit. Never await HTTP calls, message brokers or user input inside a transaction. Do the slow work first, then open the transaction, write and commit. Long transactions are a top cause of blocking and deadlocks.</div>
+
+<h3>Isolation levels and blocking</h3>
+<p>The default isolation level on SQL Server is <code>READ COMMITTED</code>, where readers can block writers and vice versa. Many high-throughput SQL Server systems enable <b>Read Committed Snapshot Isolation</b> (RCSI) at the database level. Readers then see the last committed version without taking shared locks, which removes most reader/writer blocking. It's the default on Azure SQL Database.</p>
+
+<pre><code class="language-sql">ALTER DATABASE Shop SET READ_COMMITTED_SNAPSHOT ON;</code></pre>
+<p>Request a specific isolation level per transaction if you need one: <code>BeginTransactionAsync(IsolationLevel.Serializable)</code>. PostgreSQL uses MVCC, so readers never block writers by default.</p>
+
+<h2>Connection resiliency</h2>
+<p>Cloud databases have transient failures: failovers, throttling, dropped connections. EF's <b>execution strategies</b> retry automatically:</p>
+
+<pre><code class="language-csharp">options.UseSqlServer(connStr, sql =&gt; sql.EnableRetryOnFailure(
+    maxRetryCount: 5,
+    maxRetryDelay: TimeSpan.FromSeconds(10),
+    errorNumbersToAdd: null));
+
+// PostgreSQL: options.UseNpgsql(connStr, o =&gt; o.EnableRetryOnFailure());</code></pre>
+
+<div class="callout danger"><span class="title">Retries + your own transaction = exception</span>
+With a retrying strategy, EF can't retry a block of operations you started yourself. It doesn't know where the unit begins. <code>BeginTransaction</code> throws <i>"The configured execution strategy does not support user-initiated transactions"</i>. Wrap the whole unit in the strategy:</div>
+
+<pre><code class="language-csharp">var strategy = db.Database.CreateExecutionStrategy();
+await strategy.ExecuteAsync(async () =&gt;
+{
+    await using var tx = await db.Database.BeginTransactionAsync();
+    // ... all operations of the unit ...
+    await db.SaveChangesAsync();
+    await tx.CommitAsync();
+});</code></pre>
+<p>The delegate may run more than once, so make it <b>idempotent</b>. Don't, for example, add entities to the context outside the delegate and then retry. Create or attach them inside it.</p>
+
+<h2>Exercise</h2>
+<div class="exercise">
+  <h4>🛠 Simulate a lost update</h4>
+  <ol>
+    <li>Without a concurrency token, open two contexts, load the same product in each, change the price differently, and save both. Which value wins? (The last writer silently overwrites.)</li>
+    <li>Add <code>[Timestamp] RowVersion</code>, migrate, and repeat. Catch the exception and implement "database wins".</li>
+    <li>Enable <code>EnableRetryOnFailure</code> and try <code>BeginTransactionAsync</code> directly. Read the exception, then fix it with <code>CreateExecutionStrategy</code>.</li>
+  </ol>
+</div>
+
+<h2>Quiz</h2>
+
+<div class="quiz" data-answer="d">
+<p class="q">What does EF Core do when an optimistic concurrency check fails?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. It retries automatically</button>
+<button class="opt" type="button" data-opt="b">B. It locks the row and waits</button>
+<button class="opt" type="button" data-opt="c">C. It silently overwrites</button>
+<button class="opt" type="button" data-opt="d">D. It throws <code>DbUpdateConcurrencyException</code></button>
+</div>
+<p class="explain">The UPDATE affects 0 rows because the version no longer matches. You decide how to resolve it.</p>
+</div>
+
+<div class="quiz" data-answer="b">
+<p class="q">You enabled <code>EnableRetryOnFailure</code> and need a manual transaction. What's the correct pattern?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. Disable retries for the whole app</button>
+<button class="opt" type="button" data-opt="b">B. Run the transaction inside <code>db.Database.CreateExecutionStrategy().ExecuteAsync(...)</code></button>
+<button class="opt" type="button" data-opt="c">C. Use <code>TransactionScope</code> with <code>Required</code></button>
+<button class="opt" type="button" data-opt="d">D. Call <code>SaveChanges</code> twice without a transaction</button>
+</div>
+<p class="explain">The execution strategy must own the whole retriable unit, including the transaction.</p>
+</div>
+
+<div class="quiz" data-answer="a">
+<p class="q">Which database setting reduces reader/writer blocking on SQL Server?</p>
+<div class="opts">
+<button class="opt" type="button" data-opt="a">A. <code>READ_COMMITTED_SNAPSHOT ON</code></button>
+<button class="opt" type="button" data-opt="b">B. <code>AUTO_SHRINK ON</code></button>
+<button class="opt" type="button" data-opt="c">C. <code>RECOVERY SIMPLE</code></button>
+<button class="opt" type="button" data-opt="d">D. <code>NOLOCK</code> on every query</button>
+</div>
+<p class="explain">RCSI uses row versioning so readers don't take shared locks. NOLOCK risks dirty and inconsistent reads.</p>
+</div>
+
+<h2>Further reading</h2>
+<ul>
+  <li><a href="https://learn.microsoft.com/ef/core/saving/concurrency" target="_blank" rel="noopener">Handling concurrency conflicts</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/saving/transactions" target="_blank" rel="noopener">Using transactions</a></li>
+  <li><a href="https://learn.microsoft.com/ef/core/miscellaneous/connection-resiliency" target="_blank" rel="noopener">Connection resiliency</a></li>
+</ul>
+</article>
+<nav id="pager" aria-label="Lesson navigation"></nav>
+</main>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="../assets/js/course.js"></script>
+<script src="../assets/js/ai-assistant.js"></script>
+</body>
+</html>

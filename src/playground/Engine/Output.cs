@@ -10,7 +10,9 @@ public sealed class OutputItem
 {
     public OutputItemKind Kind { get; init; }
     public string? Title { get; init; }
-    public string Text { get; set; } = "";
+    public string Text { get => text ?? builder?.ToString() ?? ""; set { text = value; builder = null; } }
+    string? text;
+    internal System.Text.StringBuilder? builder;
     public List<string> Columns { get; init; } = new();
     public List<List<string>> Rows { get; init; } = new();
     public int TotalRows { get; init; }
@@ -20,17 +22,35 @@ public sealed class OutputItem
 public sealed class OutputSink : TextWriter
 {
     public const int MaxRows = 200;
+    public const int MaxConsoleChars = 200_000;
+    int consoleChars;
+    bool truncated;
     public static OutputSink? Current { get; set; }
     public List<OutputItem> Items { get; } = new();
     public override System.Text.Encoding Encoding => System.Text.Encoding.UTF8;
 
-    OutputItem TextItem()
+    System.Text.StringBuilder TextBuffer()
     {
-        if (Items.Count == 0 || Items[^1].Kind != OutputItemKind.Text) Items.Add(new OutputItem { Kind = OutputItemKind.Text });
-        return Items[^1];
+        if (Items.Count == 0 || Items[^1].Kind != OutputItemKind.Text || Items[^1].Title is not null)
+            Items.Add(new OutputItem { Kind = OutputItemKind.Text, builder = new System.Text.StringBuilder() });
+        var item = Items[^1];
+        if (item.builder is null) { item.builder = new System.Text.StringBuilder(item.Text); }
+        return item.builder;
     }
-    public override void Write(char value) => TextItem().Text += value;
-    public override void Write(string? value) => TextItem().Text += value;
+    public override void Write(char value) => Append(value.ToString());
+    public override void Write(string? value) => Append(value);
+    void Append(string? value)
+    {
+        if (string.IsNullOrEmpty(value) || truncated) return;
+        if (consoleChars + value.Length > MaxConsoleChars)
+        {
+            truncated = true;
+            TextBuffer().Append(value.AsSpan(0, Math.Max(0, MaxConsoleChars - consoleChars))).Append($"\n… output truncated after {MaxConsoleChars:N0} characters.");
+            return;
+        }
+        consoleChars += value.Length;
+        TextBuffer().Append(value);
+    }
     public void Add(OutputItem item) => Items.Add(item);
 
     public void Dump(object? value, string? title)

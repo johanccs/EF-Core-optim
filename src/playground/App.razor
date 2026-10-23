@@ -308,10 +308,21 @@
         StateHasChanged();
         await Task.Yield();
         database?.Dispose();
-        database = new Database(size);
+        database = null;
         result = null;
-        status = $"Fresh data: {database.Summary}.";
-        preparing = false;
+        try
+        {
+            database = new Database(size);
+            status = $"Fresh data: {database.Summary}.";
+        }
+        catch (Exception ex)
+        {
+            status = "Couldn't create the database: " + ex.Message + " Try a smaller data size.";
+        }
+        finally
+        {
+            preparing = false;
+        }
     }
 
     async Task GoToLineAsync(int line)

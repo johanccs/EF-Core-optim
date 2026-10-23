@@ -69,11 +69,15 @@ public sealed class CodeRunner(HttpClient http)
     public bool IsReady => warmUp?.IsCompletedSuccessfully == true;
 
     /// <summary>Downloads the core references and compiles a tiny program once, so the first real run is faster.</summary>
-    public Task WarmUpAsync() => warmUp ??= Task.Run(async () =>
+    public Task WarmUpAsync()
     {
-        await Task.WhenAll(CoreReferences.Select(EnsureReference));
-        Compile("var x = db.Customers.Where(c => c.Id > 0).Select(c => c.Name).Take(1);");
-    });
+        if (warmUp is { IsFaulted: true } or { IsCanceled: true }) warmUp = null;   // e.g. a network blip: retry on the next run
+        return warmUp ??= Task.Run(async () =>
+        {
+            await Task.WhenAll(CoreReferences.Select(EnsureReference));
+            Compile("var x = db.Customers.Where(c => c.Id > 0).Select(c => c.Name).Take(1);");
+        });
+    }
 
     async Task EnsureReference(string name)
     {
@@ -151,13 +155,14 @@ public sealed class CodeRunner(HttpClient http)
             }
             finally
             {
-                tracked = db.ChangeTracker.Entries().Count();
+                try { tracked = db.ChangeTracker.Entries().Count(); }
+                catch (ObjectDisposedException) { tracked = 0; }   // the code disposed the context itself
             }
         }
         catch (Exception ex)
         {
             var real = ex is TargetInvocationException { InnerException: { } inner } ? inner : ex;
-            output.Add(new OutputItem { Kind = OutputItemKind.Error, Title = real.GetType().Name, Text = real.Message + ExceptionLine(real) });
+            output.Add(new OutputItem { Kind = OutputItemKind.Error, Title = real.GetType().Name, Text = real.Message });
         }
         finally
         {
@@ -170,11 +175,5 @@ public sealed class CodeRunner(HttpClient http)
             Compiled = true, Diagnostics = diagnostics, Output = output.Items, Commands = recorder.Entries,
             TrackedEntities = tracked, CompileMs = compileMs, RunMs = sw.Elapsed.TotalMilliseconds,
         };
-    }
-
-    static string ExceptionLine(Exception ex)
-    {
-        var frame = new StackTrace(ex, true).GetFrames()?.FirstOrDefault(f => f.GetFileName() == "Program.cs");
-        return frame?.GetFileLineNumber() is > 0 and var line ? $"\n(at line {line})" : "";
     }
 }

@@ -24,8 +24,7 @@
     matProjection: 0.001,   // ms to materialize one projected (DTO / anonymous) row
     perRowProcessed: 0.001, // ms to read one result row that doesn't create a new object
     perEntitySave: 0.01,    // ms of SaveChanges work per entity (DetectChanges, command building)
-    maxBatch: 42,           // EF Core's default SQL Server batch size
-    minBatch: 4,            // below this, SQL Server statements aren't batched
+    maxBatch: 42,           // EF Core's default SQL Server batch size (statements per round trip)
   };
   var B = { order: 60, customer: 150, address: 100, product: 600, key: 4, name: 20, total: 9, city: 15, orderProj: 45, insertRow: 120, updateRow: 40 };
 
@@ -36,8 +35,11 @@
     { id: "ef", label: "EF Core processing", phrase: "EF Core processing", css: "--viz-4" },
   ];
 
-  function batches(n) { return n < M.minBatch ? n : Math.ceil(n / M.maxBatch); }
-  function txTrips(b) { return b > 1 ? 2 : 0; }   // BEGIN + COMMIT when SaveChanges needs a transaction
+  // Verified with tools/lab-sql: EF Core 10 batches even 2-3 statements into one command (inserts become a
+  // single MERGE per batch). SaveChanges skips the transaction only when it executes ONE statement (EF 7+);
+  // otherwise BEGIN and COMMIT each cost a round trip.
+  function batches(n) { return Math.ceil(n / M.maxBatch); }
+  function txTrips(statements) { return statements > 1 ? 2 : 0; }
 
   // ---------------------------------------------------------------------------------------------
   // Scenarios. Each approach returns counts; time() turns counts into the cost breakdown.
@@ -133,7 +135,7 @@
         { id: "batched", label: "One SaveChanges (batched)",
           code: "db.Products.AddRange(newProducts);\nawait db.SaveChangesAsync();   // up to 42 rows per MERGE batch",
           repeat: function (p) { return [batches(p.n)]; },
-          counts: function (p) { var b = batches(p.n); return { trips: b + txTrips(b), rowsWritten: p.n, rowsReturned: p.n, bytes: p.n * 12, bytesSent: p.n * B.insertRow, ef: p.n * M.perEntitySave }; } },
+          counts: function (p) { var b = batches(p.n); return { trips: b + txTrips(b), rowsWritten: p.n, rowsReturned: p.n, bytes: p.n * 12, bytesSent: p.n * B.insertRow, ef: p.n * M.perEntitySave }; } },   // one MERGE statement per batch
       ],
     },
     {
@@ -144,7 +146,7 @@
         { id: "load-modify-save", label: "Load, modify, SaveChanges",
           code: "var products = await db.Products.Where(p => p.CategoryId == categoryId).ToListAsync();\nforeach (var p in products) p.Price *= 1.1m;\nawait db.SaveChangesAsync();",
           repeat: function (p) { return [1, batches(p.n)]; },
-          counts: function (p) { var b = batches(p.n); return { trips: 1 + b + txTrips(b), rowsRead: 2 * p.n, rowsWritten: p.n, rowsReturned: p.n, bytes: p.n * B.product, bytesSent: p.n * B.updateRow, ef: p.n * (M.matTracked + M.perEntitySave) }; } },
+          counts: function (p) { var b = batches(p.n); return { trips: 1 + b + txTrips(p.n), rowsRead: 2 * p.n, rowsWritten: p.n, rowsReturned: p.n, bytes: p.n * B.product, bytesSent: p.n * B.updateRow, ef: p.n * (M.matTracked + M.perEntitySave) }; } },
         { id: "execute-update", label: "ExecuteUpdateAsync (one statement)",
           code: "await db.Products\n    .Where(p => p.CategoryId == categoryId)\n    .ExecuteUpdateAsync(s => s.SetProperty(p => p.Price, p => p.Price * 1.1m));",
           counts: function (p) { return { trips: 1, rowsRead: p.n, rowsWritten: p.n, rowsReturned: 0, bytes: 8, bytesSent: 200, ef: 0 }; } },
@@ -314,8 +316,7 @@
     var fastest = rows.slice().sort(function (x, y) { return x.total - y.total; })[0];
     var slowest = rows.slice().sort(function (x, y) { return y.total - x.total; })[0];
     chartEl.setAttribute("aria-label", "Estimated time: " + rows.map(function (r) { return r.a.label + " " + fmtMs(r.total); }).join("; "));
-    chartEl.onmousemove = chartEl.onfocusin = function (e) { var row = e.target.closest(".lab-row"); if (row) showTip(rows[+row.getAttribute("data-row")], row, e); };
-    chartEl.onmouseleave = chartEl.onfocusout = function () { tooltip.hidden = true; };
+    currentRows = rows;
 
     tableEl.innerHTML = "<caption>Numbers behind the chart</caption><thead><tr>" +
       ["Approach", "Round trips", "Rows read", "Rows returned", "Data moved"].concat(COMPONENTS.map(function (k) { return k.label; })).concat(["Total"])
@@ -346,6 +347,14 @@
         "</b> here. The slow approach is dominated by <b>" + dominant.phrase + "</b> (" + fmtMs(slowest.t[dominant.id]) + ").";
   }
 
+  // Tooltip: mouse and keyboard (focusin/focusout bubble; bound once, read the latest rows)
+  var currentRows = [];
+  function tipFrom(e) { var row = e.target.closest && e.target.closest(".lab-row"); if (row && currentRows.length) showTip(currentRows[+row.getAttribute("data-row")], row, e); }
+  chartEl.addEventListener("mousemove", tipFrom);
+  chartEl.addEventListener("focusin", tipFrom);
+  chartEl.addEventListener("mouseleave", function () { tooltip.hidden = true; });
+  chartEl.addEventListener("focusout", function () { tooltip.hidden = true; });
+
   function showTip(r, row, e) {
     tooltip.innerHTML = "<b>" + esc(r.a.label) + "</b><table>" + COMPONENTS.map(function (k) {
       var pct = r.total ? Math.round((r.t[k.id] / r.total) * 100) : 0;
@@ -353,7 +362,7 @@
     }).join("") + '<tr class="sum"><td>Total</td><td>' + fmtMs(r.total) + "</td><td></td></tr></table>";
     tooltip.hidden = false;
     var wrap = chartEl.parentElement.getBoundingClientRect(), rr = row.getBoundingClientRect();
-    var x = e && e.clientX ? e.clientX - wrap.left + 14 : rr.left - wrap.left + 40;
+    var x = e && e.type === "mousemove" ? e.clientX - wrap.left + 14 : rr.left - wrap.left + 40;
     x = Math.min(x, wrap.width - tooltip.offsetWidth - 8);
     tooltip.style.left = Math.max(8, x) + "px";
     tooltip.style.top = (rr.bottom - wrap.top + 6) + "px";
@@ -366,7 +375,7 @@
     "<li><b>Database</b> = " + M.perCommandDb + " ms per statement + " + (M.perRowRead * 1000) + " µs per row read + " + (M.perRowWritten * 1000) + " µs per row written.</li>" +
     "<li><b>Data transfer</b> = bytes moved ÷ the network's bandwidth. Average row sizes: order " + B.order + " B, customer " + B.customer + " B, address " + B.address + " B, product " + B.product + " B (incl. description).</li>" +
     "<li><b>EF Core processing</b> = " + (M.perCommandEf * 1000) + " µs per command + per row: " + (M.matTracked * 1000) + " µs to materialize and track an entity, " + (M.matUntracked * 1000) + " µs without tracking, " + (M.matProjection * 1000) + " µs for a projected row; SaveChanges " + (M.perEntitySave * 1000) + " µs per entity.</li>" +
-    "<li><b>Batching</b>: SQL Server batches up to " + M.maxBatch + " statements per round trip, and doesn't batch fewer than " + M.minBatch + ". A SaveChanges that needs several batches adds BEGIN and COMMIT round trips.</li>" +
+    "<li><b>Batching</b>: EF Core sends up to " + M.maxBatch + " statements per round trip to SQL Server (inserts become one MERGE per batch). SaveChanges runs without a transaction only when it executes a single statement; otherwise BEGIN and COMMIT add two round trips.</li>" +
     "</ul><p>Not modelled: query plan differences, locking and contention, parallelism, caching, connection-pool waits, and server load. The N+1 loop assumes each order has a different customer.</p>";
 
   select(state.scenario.id, false);

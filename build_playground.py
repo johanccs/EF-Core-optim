@@ -60,10 +60,13 @@ def main():
     index = OUT / "index.html"
     page = index.read_text(encoding="utf-8")
     m = re.search(r'<script type="importmap">(.*?)</script>', page, re.S)
-    if m:
-        digest = base64.b64encode(hashlib.sha256(m.group(1).encode("utf-8")).digest()).decode()
-        page = page.replace("script-src 'self' 'wasm-unsafe-eval'", f"script-src 'self' 'wasm-unsafe-eval' 'sha256-{digest}'", 1)
-        index.write_text(page, encoding="utf-8")
+    marker = "script-src 'self' 'wasm-unsafe-eval'"
+    if not m or marker not in page:
+        sys.exit("error: couldn't add the import map hash to the CSP (import map or script-src marker not found); "
+                 "the playground would not load. Check src/playground/wwwroot/index.html.")
+    digest = base64.b64encode(hashlib.sha256(m.group(1).encode("utf-8")).digest()).decode()
+    page = page.replace(marker, f"{marker} 'sha256-{digest}'", 1)
+    index.write_text(page, encoding="utf-8")
 
     refs = OUT / "refs"
     for f in list(refs.iterdir()):

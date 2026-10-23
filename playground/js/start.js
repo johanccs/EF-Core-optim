@@ -3,7 +3,7 @@
 // hosting Blazor WebAssembly on GitHub Pages). On a local dev server the uncompressed files are used.
 import { BrotliDecode } from "./brotli-decode.min.js";
 
-const useBrotli = !["localhost"].includes(location.hostname) && !new URLSearchParams(location.search).has("nobrotli");
+const useBrotli = !new URLSearchParams(location.search).has("nobrotli");
 
 // Standalone Blazor WebAssembly takes loadBootResource at the top level
 // (the nested `webAssembly: {...}` form is only for Blazor Web Apps / blazor.web.js).
@@ -12,7 +12,7 @@ Blazor.start({
         if (!useBrotli || type === "dotnetjs" || type === "configuration" || type === "manifest") return undefined;
         return (async () => {
             const response = await fetch(defaultUri + ".br", { cache: "no-cache" });
-            if (!response.ok) throw new Error(`${response.status} ${response.statusText} loading ${name}`);
+            if (!response.ok) return fetch(defaultUri, { cache: "no-cache" });   // no .br copy (e.g. dotnet run): use the plain file
             const decompressed = BrotliDecode(new Int8Array(await response.arrayBuffer()));
             const contentType = type === "dotnetwasm" ? "application/wasm" : "application/octet-stream";
             return new Response(decompressed, { headers: { "content-type": contentType } });

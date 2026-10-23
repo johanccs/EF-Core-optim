@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>EF Core Playground · EF Core Optimization Course</title>
+    <meta name="description" content="Write and run real EF Core 10 code against SQLite, entirely in your browser. See every SQL command EF Core sends.">
+    <base href="./">
+    <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="../assets/css/course.css">
+    <link rel="stylesheet" href="css/playground.css">
+    <script src="../assets/js/theme-init.js"></script>
+    <script type="importmap"></script>
+</head>
+<body>
+    <div id="app">
+        <div class="pg-loading" role="status" aria-live="polite">
+            <div class="pg-spinner" aria-hidden="true"></div>
+            <h1>Loading the EF Core Playground…</h1>
+            <p>Downloading .NET, EF Core 10, SQLite and the C# compiler (about 10 MB, cached after the first visit).</p>
+            <p><a href="../index.html">← Back to the course</a></p>
+        </div>
+    </div>
+    <noscript><p class="callout warn">The playground runs .NET in your browser and needs JavaScript and WebAssembly.</p></noscript>
+
+    <div id="blazor-error-ui" role="alert">
+        Something went wrong in the playground. <a href="." class="reload">Reload</a>
+        <button type="button" class="dismiss" aria-label="Dismiss">×</button>
+    </div>
+
+    <script src="_framework/blazor.webassembly#[.{fingerprint}].js" autostart="false"></script>
+    <script type="module" src="js/start.js"></script>
+</body>
+</html>

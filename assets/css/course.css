@@ -135,6 +135,16 @@ a:hover { text-decoration-thickness: 2px; }
   display: grid; place-items: center; font-size: 13px; font-weight: 800;
 }
 .topbar .spacer { flex: 1; }
+.top-links { display: flex; gap: 4px; margin-left: 8px; }
+.top-links a { font-size: 14px; font-weight: 600; text-decoration: none; color: var(--text); padding: 6px 10px; border-radius: 8px; }
+.top-links a:hover, .top-links a[aria-current="page"] { background: var(--accent-soft); color: var(--accent); }
+@media (max-width: 700px) {
+  .topbar .version { display: none; }
+  .top-links { margin-left: 0; }
+  .top-links a { padding: 6px 8px; font-size: 15px; }
+  .top-links .tl-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }  /* icon only; name stays for screen readers */
+}
+@media (max-width: 480px) { .topbar .brand-text { display: none; } .topbar { gap: 8px; } }
 .topbar .version { font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; }
 .topbar .progress-pill { font-size: 13px; color: var(--muted); white-space: nowrap; }
 .icon-btn {
@@ -481,3 +491,11 @@ details summary { cursor: pointer; font-weight: 600; color: var(--accent); }
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* ---------- "Try it" callout (links to the Lab and Playground) ---------- */
+.callout.try { border-color: var(--accent); background: var(--accent-soft); }
+.callout.try ul { margin: 4px 0 0; padding-left: 4px; list-style: none; }
+.callout.try li { margin: 4px 0; }
+
+/* Long inline identifiers (e.g. CoreEventId.LazyLoadOnDisposedContextWarning) may wrap on narrow screens */
+:not(pre) > code { overflow-wrap: anywhere; }

@@ -48,7 +48,7 @@
     { id: 25, level: 5, slug: "25-benchmarking-and-checklist",   title: "Benchmarking & the Production Checklist", summary: "BenchmarkDotNet, load testing, final checklist." }
   ];
 
-  var VERSION = "1.1.0";   // bump on every release; keep package.json in sync
+  var VERSION = "1.2.0";   // bump on every release; keep package.json in sync
 
   var STORE_KEY = "efcourse.completed.v2";   // v2: lessons renumbered when the Configuration level was added
   var THEME_KEY = "efcourse.theme";
@@ -96,8 +96,12 @@
     var bar = el("header", { "class": "topbar" });
     bar.innerHTML =
       '<button type="button" class="icon-btn" id="menu-btn" aria-label="Toggle lesson menu">☰</button>' +
-      '<a class="brand" href="' + root + 'index.html"><span class="logo">EF</span><span>EF Core Optimization</span></a>' +
+      '<a class="brand" href="' + root + 'index.html"><span class="logo">EF</span><span class="brand-text">EF Core Optimization</span></a>' +
       '<span class="version" title="Course version">v' + VERSION + '</span>' +
+      '<nav class="top-links" aria-label="Practice tools">' +
+        '<a href="' + root + 'lab.html"' + (body.getAttribute("data-page") === "lab" ? ' aria-current="page"' : '') + ' title="Compare approaches: real SQL, round trips and estimated time"><span aria-hidden="true">🧪</span><span class="tl-text"> Lab</span></a>' +
+        '<a href="' + root + 'playground/" title="Write and run real EF Core 10 code in your browser"><span aria-hidden="true">▶</span><span class="tl-text"> Playground</span></a>' +
+      '</nav>' +
       '<span class="spacer"></span>' +
       '<span class="progress-pill" id="progress-pill"></span>' +
       '<button type="button" class="icon-btn" id="theme-btn" aria-label="Toggle dark mode"></button>';

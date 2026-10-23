@@ -140,6 +140,12 @@ With <code>Microsoft.Data.SqlClient</code>, reading very large text or binary co
 }</code></pre>
 <p>Streaming keeps the connection open for the whole loop. Keep the loop body fast, and don't run other queries on the same context inside it unless MARS is enabled. Streaming with tracking still accumulates entities in the change tracker, so use <code>AsNoTracking()</code> (Lesson 10).</p>
 
+<div class="callout try"><span class="title">Try it yourself (no install needed)</span>
+<ul>
+<li>▶ <a href="../playground/?example=first-query">Playground: Your first query</a>: run it with real EF Core 10 in your browser and inspect every SQL command.</li>
+<li>▶ <a href="../playground/?example=client-eval">Playground: Untranslatable filters</a>: run it with real EF Core 10 in your browser and inspect every SQL command.</li>
+</ul></div>
+
 <div class="takeaways">
   <h2 class="box-title" id="key-takeaways">🔑 Key takeaways</h2>
   <ul>

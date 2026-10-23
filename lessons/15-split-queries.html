@@ -110,6 +110,12 @@ var order = await db.Orders.Include(o =&gt; o.Customer).Include(o =&gt; o.Lines)
 <div class="callout tip"><span class="title">How to decide</span>
 Don't choose by rule. <b>Measure both</b> with realistic data and realistic network latency. A split query trades data volume for round trips. With 0.2 ms local latency, splitting almost always wins for multiple collections. With a 20 ms cross-region link, the extra round trips may cost more than the duplicated data. Often the best answer is neither: <b>project only what you need</b> (Lesson 11), so the duplication is a few narrow columns.</div>
 
+<div class="callout try"><span class="title">Try it yourself (no install needed)</span>
+<ul>
+<li>🧪 <a href="../lab.html?scenario=cartesian">Lab: Cartesian explosion</a>: compare the approaches' SQL, round trips and estimated time.</li>
+<li>▶ <a href="../playground/?example=split-query">Playground: Include and split queries</a>: run it with real EF Core 10 in your browser and inspect every SQL command.</li>
+</ul></div>
+
 <div class="takeaways">
   <h2 class="box-title" id="key-takeaways">🔑 Key takeaways</h2>
   <ul>

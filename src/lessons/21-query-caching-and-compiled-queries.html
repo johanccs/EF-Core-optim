@@ -149,6 +149,11 @@ if (filter.CategoryId is int c) q = q.Where(p => p.CategoryId == c);      // par
 if (filter.MaxPrice is decimal m) q = q.Where(p => p.Price <= m);         // parameter: good
 ```
 
+<div class="callout try"><span class="title">Try it yourself (no install needed)</span>
+<ul>
+<li>▶ <a href="../playground/?example=compiled-query">Playground: Compiled queries</a>: run it with real EF Core 10 in your browser and inspect every SQL command.</li>
+</ul></div>
+
 <div class="takeaways">
   <h2 class="box-title">🔑 Key takeaways</h2>
   <ul>

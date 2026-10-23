@@ -39,7 +39,7 @@ const server = createServer(async (req, res) => {
 await new Promise((r) => server.listen(0, r));
 const origin = `http://127.0.0.1:${server.address().port}`;
 const lessons = (await readdir(path.join(ROOT, "lessons"))).filter((f) => f.endsWith(".html")).sort();
-const pages = ["index.html", ...lessons.map((f) => "lessons/" + f)];
+const pages = ["index.html", "lab.html", ...lessons.map((f) => "lessons/" + f)];
 
 const browser = await chromium.launch();
 
@@ -76,6 +76,17 @@ try {
     await page.close();
   }
   if (!failures) ok("all pages render with sidebar, goal, quizzes, unique ids and no errors");
+
+  // ---------- 1b. phone width ----------
+  {
+    const narrow = [];
+    for (const p of ["index.html", "lab.html", "lessons/12-loading-related-data.html", "lessons/25-benchmarking-and-checklist.html"]) {
+      const { page } = await open(p, { viewport: { width: 320, height: 700 } });
+      if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)) narrow.push(p);
+      await page.close();
+    }
+    check(narrow.length === 0, "no horizontal overflow at 320px (top bar, Lab, lessons)" + (narrow.length ? ": " + narrow.join(", ") : ""));
+  }
 
   // ---------- 2. internal links resolve ----------
   console.log("\n2. Internal links");
@@ -207,8 +218,67 @@ try {
     await page.close();
   }
 
-  // ---------- 6. 404 ----------
-  console.log("\n6. Not-found page");
+  // ---------- 6. Lab ----------
+  console.log("\n6. Lab (simulator)");
+  {
+    const { page, errors } = await open("lab.html?scenario=paging");
+    check((await page.getAttribute("#tab-paging", "aria-selected")) === "true", "?scenario= deep link selects the scenario");
+    const scenarios = await page.$$eval(".lab-tab", (ts) => ts.map((t) => t.dataset.id));
+    let missingSql = [];
+    for (const id of scenarios) {
+      await page.click(`#tab-${id}`);
+      const approaches = await page.$$eval(".lab-approach", (as) => as.map((a) => ({ id: a.dataset.approach, sql: a.querySelectorAll(".lab-sql").length })));
+      approaches.filter((a) => a.sql === 0).forEach((a) => missingSql.push(`${id}/${a.id}`));
+      const bars = await page.$$eval(".lab-row", (rs) => rs.length);
+      if (bars !== approaches.length) fail(`${id}: ${bars} bars for ${approaches.length} approaches`);
+    }
+    check(missingSql.length === 0, `every approach in ${scenarios.length} scenarios shows its generated SQL` + (missingSql.length ? ": missing " + missingSql.join(", ") : ""));
+    await page.click("#tab-n-plus-one");
+    const before = await page.textContent("#lab-takeaway");
+    await page.$eval('input[data-param="n"]', (el) => { el.value = "1000"; el.dispatchEvent(new Event("input", { bubbles: true })); });
+    await page.waitForTimeout(50);
+    const after = await page.textContent("#lab-takeaway");
+    check(before !== after && /faster/.test(after), "moving a slider recomputes the comparison");
+    check((await page.textContent('[data-repeat="loop:1"]')).includes("1,000"), "the N+1 per-row command shows its repeat count");
+    await page.focus("#tab-n-plus-one"); await page.keyboard.press("ArrowRight");
+    check(await page.evaluate(() => document.activeElement.id) === "tab-cartesian", "arrow keys move between scenarios");
+    check(errors.length === 0, "no Lab errors" + (errors.length ? ": " + errors.join(" | ") : ""));
+    await page.close();
+  }
+
+  // ---------- 7. Playground (real EF Core in WebAssembly) ----------
+  console.log("\n7. Playground (EF Core 10 + SQLite + Roslyn in the browser)");
+  {
+    const { page, errors } = await open("playground/?example=n-plus-one", { bypassCSP: true });   // axe is injected inline
+    const started = Date.now();
+    await page.waitForSelector("#run:not([disabled])", { timeout: 240000 });
+    check(true, `playground boots and seeds its database (${((Date.now() - started) / 1000).toFixed(1)} s)`);
+    check((await page.$eval("#example", (s) => s.value)) === "n-plus-one", "?example= deep link selects the example");
+    await page.click("#run");
+    await page.waitForFunction(() => /^Done|error/.test(document.querySelector(".pg-status").textContent), null, { timeout: 120000 });
+    const status = await page.textContent(".pg-status");
+    check(/^Done: 22 SQL command/.test(status), `N+1 example runs with real EF Core and logs 22 SQL commands (${status.trim()})`);
+    await page.click("#tab-sql");
+    check((await page.$$eval(".pg-sql", (els) => els.length)) === 22, "SQL tab lists every command");
+    check((await page.textContent(".pg-sql pre")).includes('FROM "Orders"'), "SQL tab shows the SQL EF Core generated");
+    await page.fill("#code", "var ok = 1;\nvar bad = db.Customers.Wher(c => c.Id > 0);\n");
+    await page.click("#run");
+    await page.waitForFunction(() => /error/.test(document.querySelector(".pg-status").textContent), null, { timeout: 60000 });
+    const diag = (await page.textContent(".pg-diagnostics")).replace(/\s+/g, " ").trim();
+    check(diag.includes("Line 2, col 24"), "compile errors point at the user's own line and column" + (diag.includes("Line 2, col 24") ? "" : ` (got: ${diag.slice(0, 160)})`));
+    await page.selectOption("#example", "blank");
+    await page.click("#run");
+    await page.waitForFunction(() => /^Done/.test(document.querySelector(".pg-status").textContent), null, { timeout: 60000 });
+    check((await page.$$eval(".pg-table tbody tr", (r) => r.length)) === 10, ".Dump() renders results as a table");
+    await page.addScriptTag({ content: AXE });
+    const v = await page.evaluate(async () => (await axe.run(document, { runOnly: ["wcag2a", "wcag2aa", "wcag21aa", "best-practice"] })).violations);
+    check(v.length === 0, "playground has no axe violations" + (v.length ? ": " + v.map((x) => x.id).join(",") : ""));
+    check(errors.length === 0, "no playground page errors" + (errors.length ? ": " + errors.join(" | ") : ""));
+    await page.close();
+  }
+
+  // ---------- 8. 404 ----------
+  console.log("\n8. Not-found page");
   {
     const r = await fetch(origin + BASE + "lessons/05-tracking-vs-no-tracking.html");
     check(r.status === 404 && (await r.text()).includes("Page not found"), "unknown URLs serve the 404 page");

@@ -1,0 +1,348 @@
+@using System.Globalization
+@implements IAsyncDisposable
+@inject CodeRunner Runner
+@inject IJSRuntime JS
+
+<a class="skip-link" href="#code">Skip to the editor</a>
+<header class="pg-bar">
+    <a class="pg-back" href="../index.html" aria-label="Back to the course home page">← Course</a>
+    <h1 class="pg-title">EF Core Playground</h1>
+    <span class="pg-badge" title="Real EF Core 10 with SQLite, compiled and executed in your browser">EF Core 10 · SQLite · in your browser</span>
+    <span class="pg-spacer"></span>
+    <label class="pg-size">
+        <span>Data</span>
+        <select value="@size" @onchange="ChangeSizeAsync" disabled="@busy" aria-label="Amount of sample data">
+            <option value="@DataSize.Small">Small</option>
+            <option value="@DataSize.Medium">Medium</option>
+            <option value="@DataSize.Large">Large</option>
+        </select>
+    </label>
+    <button type="button" class="icon-btn" @onclick="ResetDatabaseAsync" disabled="@busy" title="Recreate and reseed the database">Reset data</button>
+</header>
+
+<main class="pg-main" id="main">
+    <section class="pg-pane pg-editor-pane" aria-labelledby="editor-heading">
+        <h2 id="editor-heading" class="sr-only">Code</h2>
+        <div class="pg-row">
+            <label for="example" class="pg-label">Example</label>
+            <select id="example" value="@current.Id" @onchange="ChangeExampleAsync" disabled="@busy">
+                @foreach (var ex in Examples.All)
+                {
+                    <option value="@ex.Id">@(ex.Lesson > 0 ? $"L{ex.Lesson} · " : "")@ex.Title</option>
+                }
+            </select>
+            @if (current.Lesson > 0)
+            {
+                <a class="pg-lesson" href="../lessons/@(current.LessonSlug).html" target="_blank" rel="noopener">Open Lesson @current.Lesson ↗</a>
+            }
+        </div>
+        <p class="pg-desc">@current.Description</p>
+
+        <textarea id="code" class="pg-code" @ref="editor" @bind="code" @bind:event="oninput" @bind:after="SaveDraftAsync"
+                  spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off"
+                  aria-label="C# code. Tab indents; press Escape then Tab to leave the editor. Ctrl+Enter runs."></textarea>
+
+        <div class="pg-actions">
+            <button type="button" class="btn" id="run" @onclick="RunAsync" disabled="@busy">@(running ? "Running…" : "▶ Run")</button>
+            <span class="pg-hint"><kbd>Ctrl</kbd>+<kbd>Enter</kbd></span>
+            <span class="pg-spacer"></span>
+            @if (code != current.Code)
+            {
+                <button type="button" class="icon-btn" @onclick="ResetCodeAsync">Restore example</button>
+            }
+        </div>
+        <p class="pg-status" role="status" aria-live="polite">@status</p>
+        <p class="pg-note">
+            Runs on <b>SQLite</b>, so the SQL differs from SQL Server in places. For example, SQLite has no decimal type,
+            so EF Core compares decimals with <code>ef_compare(...)</code>. Database changes persist until you reset the data.
+        </p>
+    </section>
+
+    <section class="pg-pane pg-results-pane" aria-label="Results">
+        <div class="pg-tabs" role="tablist" aria-label="Result views" @onkeydown="TabKeyAsync">
+            @foreach (var (id, label) in Tabs())
+            {
+                <button type="button" role="tab" id="tab-@id" aria-controls="panel-@id" aria-selected="@(tab == id ? "true" : "false")"
+                        tabindex="@(tab == id ? 0 : -1)" class="pg-tab @(tab == id ? "active" : "")" @onclick="() => tab = id">@label</button>
+            }
+        </div>
+
+        @if (result is { } r)
+        {
+            <div class="pg-summary" aria-live="polite">
+                <span><b>@r.Commands.Count</b> SQL command@(r.Commands.Count == 1 ? "" : "s") (round trips)</span>
+                <span><b>@Ms(r.Commands.Sum(c => c.DurationMs))</b> in the database</span>
+                <span><b>@r.TrackedEntities</b> tracked entit@(r.TrackedEntities == 1 ? "y" : "ies")</span>
+                <span>run <b>@Ms(r.RunMs)</b> · compile @Ms(r.CompileMs)</span>
+            </div>
+        }
+
+        <div role="tabpanel" tabindex="0" id="panel-output" aria-labelledby="tab-output" hidden="@(tab != "output")" class="pg-panel">
+            @if (result is null)
+            {
+                <p class="pg-empty">Press <b>Run</b> to compile and execute the code. Output and <code>.Dump()</code> tables appear here.</p>
+            }
+            else if (!result.Compiled)
+            {
+                <div class="pg-error"><b>The code doesn't compile.</b> Click an error to jump to its line.</div>
+            }
+            @if (result is not null)
+            {
+                @if (result.Diagnostics.Count > 0)
+                {
+                    <ul class="pg-diagnostics">
+                        @foreach (var d in result.Diagnostics)
+                        {
+                            <li class="@(d.IsError ? "err" : "warn")">
+                                <button type="button" class="pg-link" @onclick="() => GoToLineAsync(d.Line)">Line @d.Line, col @d.Column</button>
+                                <span class="pg-diag-id">@d.Id</span> @d.Message
+                            </li>
+                        }
+                    </ul>
+                }
+                @foreach (var item in result.Output)
+                {
+                    @switch (item.Kind)
+                    {
+                        case OutputItemKind.Table:
+                            <div class="pg-table-wrap">
+                                @if (item.Title is not null) { <h3 class="pg-out-title">@item.Title</h3> }
+                                <table class="pg-table">
+                                    <thead><tr>@foreach (var c in item.Columns) { <th scope="col">@c</th> }</tr></thead>
+                                    <tbody>
+                                        @foreach (var row in item.Rows)
+                                        {
+                                            <tr>@foreach (var cell in row) { <td>@cell</td> }</tr>
+                                        }
+                                    </tbody>
+                                </table>
+                                <p class="pg-rowcount">@item.TotalRows row@(item.TotalRows == 1 ? "" : "s")@(item.TotalRows > item.Rows.Count ? $" (showing first {item.Rows.Count})" : "")</p>
+                            </div>
+                            break;
+                        case OutputItemKind.Warning:
+                            <div class="pg-warning"><b>EF Core warning</b><pre>@item.Text</pre></div>
+                            break;
+                        case OutputItemKind.Error:
+                            <div class="pg-error"><b>@item.Title</b><pre>@item.Text</pre></div>
+                            break;
+                        default:
+                            @if (item.Title is not null) { <h3 class="pg-out-title">@item.Title</h3> }
+                            <pre class="pg-console">@item.Text</pre>
+                            break;
+                    }
+                }
+                @if (result.Compiled && result.Output.Count == 0)
+                {
+                    <p class="pg-empty">The code ran without printing anything. Use <code>Console.WriteLine(...)</code> or <code>.Dump()</code>.</p>
+                }
+            }
+        </div>
+
+        <div role="tabpanel" tabindex="0" id="panel-sql" aria-labelledby="tab-sql" hidden="@(tab != "sql")" class="pg-panel">
+            @if (result is null || result.Commands.Count == 0)
+            {
+                <p class="pg-empty">Every command EF Core sends to the database appears here, with its parameters and duration.</p>
+            }
+            else
+            {
+                @foreach (var c in result.Commands.Take(MaxSqlShown))
+                {
+                    <article class="pg-sql @(c.Error is null ? "" : "failed")">
+                        <header><b>#@c.Number</b> <span>@c.Kind</span> <span class="pg-spacer"></span> <span>@Ms(c.DurationMs)</span></header>
+                        <pre>@c.Sql</pre>
+                        @if (c.Parameters.Length > 0) { <p class="pg-params">Parameters: @c.Parameters</p> }
+                        @if (c.Error is not null) { <p class="pg-params err">@c.Error</p> }
+                    </article>
+                }
+                @if (result.Commands.Count > MaxSqlShown)
+                {
+                    <p class="pg-empty">… and @(result.Commands.Count - MaxSqlShown) more commands.</p>
+                }
+            }
+        </div>
+
+        <div role="tabpanel" tabindex="0" id="panel-model" aria-labelledby="tab-model" hidden="@(tab != "model")" class="pg-panel">
+            <p class="pg-desc">The playground's <code>ShopContext</code> (the course's sample model). Data: @(database?.Summary ?? "not created yet")</p>
+            <pre class="pg-console">@modelSource</pre>
+        </div>
+    </section>
+</main>
+
+@code {
+    const int MaxSqlShown = 150;
+    Example current = Examples.All[0];
+    string code = Examples.All[0].Code;
+    string tab = "output";
+    string status = "Preparing the C# compiler…";
+    string modelSource = "";
+    DataSize size = DataSize.Medium;
+    Database? database;
+    RunResult? result;
+    bool running, preparing = true;
+    bool busy => running || preparing;
+    ElementReference editor;
+    IJSObjectReference? js;
+    DotNetObjectReference<App>? self;
+
+    IEnumerable<(string, string)> Tabs() =>
+    [
+        ("output", "Output"),
+        ("sql", result is null ? "SQL" : $"SQL ({result.Commands.Count})"),
+        ("model", "Model"),
+    ];
+
+    // Left/Right/Home/End move between tabs (WAI-ARIA tabs pattern)
+    async Task TabKeyAsync(KeyboardEventArgs e)
+    {
+        var ids = Tabs().Select(t => t.Item1).ToList();
+        var i = ids.IndexOf(tab);
+        var next = e.Key switch
+        {
+            "ArrowRight" => (i + 1) % ids.Count,
+            "ArrowLeft" => (i - 1 + ids.Count) % ids.Count,
+            "Home" => 0,
+            "End" => ids.Count - 1,
+            _ => -1,
+        };
+        if (next < 0) return;
+        tab = ids[next];
+        StateHasChanged();
+        if (js is not null) await js.InvokeVoidAsync("focusById", "tab-" + tab);
+    }
+
+    static string Ms(double ms) => ms < 10 ? ms.ToString("0.0", CultureInfo.InvariantCulture) + " ms" : ms.ToString("N0", CultureInfo.InvariantCulture) + " ms";
+
+    protected override void OnInitialized()
+    {
+        using var stream = typeof(App).Assembly.GetManifestResourceStream("Shop.cs");
+        modelSource = stream is null ? "" : new StreamReader(stream).ReadToEnd();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        js = await JS.InvokeAsync<IJSObjectReference>("import", "./js/editor.js");
+        self = DotNetObjectReference.Create(this);
+        await js.InvokeVoidAsync("attach", editor, self);
+        // Deep link: playground/?example=<id> (used by "Try it in the playground" links in the lessons)
+        var requested = await js.InvokeAsync<string?>("queryParam", "example");
+        if (Examples.All.FirstOrDefault(x => x.Id == requested) is { } linked) current = linked;
+        code = await LoadDraftAsync(current) ?? current.Code;
+        StateHasChanged();
+        await Task.Yield();
+        try
+        {
+            await Runner.WarmUpAsync();
+            status = "Creating the sample database…";
+            StateHasChanged();
+            await Task.Yield();
+            database = new Database(size);
+            status = $"Ready. {database.Summary}.";
+        }
+        catch (Exception ex)
+        {
+            status = "Couldn't start: " + ex.Message;
+        }
+        preparing = false;
+        StateHasChanged();
+    }
+
+    async Task RunAsync()
+    {
+        if (busy) return;
+        running = true;
+        status = "Compiling and running…";
+        StateHasChanged();
+        await Task.Yield();
+        try
+        {
+            database ??= new Database(size);
+            result = await Runner.RunAsync(code, database);
+            status = result.Compiled
+                ? $"Done: {result.Commands.Count} SQL command(s), {result.TrackedEntities} tracked entities."
+                : $"{result.Diagnostics.Count(d => d.IsError)} compile error(s).";
+            if (!result.Compiled || result.Output.Any(o => o.Kind == OutputItemKind.Error)) tab = "output";
+        }
+        catch (Exception ex)
+        {
+            status = "The playground hit an internal error: " + ex.Message;
+        }
+        running = false;
+    }
+
+    [JSInvokable]
+    public async Task RunFromKeyboard(string currentCode)
+    {
+        code = currentCode;
+        await RunAsync();
+        StateHasChanged();
+    }
+
+    async Task ChangeExampleAsync(ChangeEventArgs e)
+    {
+        current = Examples.All.First(x => x.Id == (string?)e.Value);
+        code = await LoadDraftAsync(current) ?? current.Code;
+        result = null;
+        tab = "output";
+        status = current.Lesson > 0 ? $"Loaded “{current.Title}” (Lesson {current.Lesson})." : $"Loaded “{current.Title}”.";
+    }
+
+    async Task ResetCodeAsync()
+    {
+        code = current.Code;
+        await SaveDraftAsync();
+    }
+
+    async Task ChangeSizeAsync(ChangeEventArgs e)
+    {
+        size = Enum.Parse<DataSize>((string)e.Value!);
+        await RecreateDatabaseAsync();
+    }
+
+    Task ResetDatabaseAsync() => RecreateDatabaseAsync();
+
+    async Task RecreateDatabaseAsync()
+    {
+        preparing = true;
+        status = "Recreating the sample database…";
+        StateHasChanged();
+        await Task.Yield();
+        database?.Dispose();
+        database = null;
+        result = null;
+        try
+        {
+            database = new Database(size);
+            status = $"Fresh data: {database.Summary}.";
+        }
+        catch (Exception ex)
+        {
+            status = "Couldn't create the database: " + ex.Message + " Try a smaller data size.";
+        }
+        finally
+        {
+            preparing = false;
+        }
+    }
+
+    async Task GoToLineAsync(int line)
+    {
+        if (js is not null) await js.InvokeVoidAsync("goToLine", editor, line);
+    }
+
+    string DraftKey(Example ex) => "efplayground.draft." + ex.Id;
+
+    async Task<string?> LoadDraftAsync(Example ex) => js is null ? null : await js.InvokeAsync<string?>("load", DraftKey(ex));
+
+    async Task SaveDraftAsync()
+    {
+        if (js is not null) await js.InvokeVoidAsync("save", DraftKey(current), code == current.Code ? null : code);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        database?.Dispose();
+        self?.Dispose();
+        if (js is not null) await js.DisposeAsync();
+    }
+}

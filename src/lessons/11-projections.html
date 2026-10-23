@@ -155,6 +155,12 @@ EF can't see inside a C# method call or constructor body. If you write <code>.Se
   <li><b>Aggregates on empty sets</b>: <code>Sum</code> of an empty collection becomes 0 (EF uses <code>COALESCE</code>). <code>Max</code> or <code>Average</code> on empty sets need a cast to a nullable type: <code>o.Lines.Max(l =&gt; (decimal?)l.UnitPrice)</code>.</li>
 </ul>
 
+<div class="callout try"><span class="title">Try it yourself (no install needed)</span>
+<ul>
+<li>🧪 <a href="../lab.html?scenario=n-plus-one">Lab: N+1 queries</a>: compare the approaches' SQL, round trips and estimated time.</li>
+<li>▶ <a href="../playground/?example=projection">Playground: Projection vs full entities</a>: run it with real EF Core 10 in your browser and inspect every SQL command.</li>
+</ul></div>
+
 <div class="takeaways">
   <h2 class="box-title">🔑 Key takeaways</h2>
   <ul>

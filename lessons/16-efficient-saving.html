@@ -154,6 +154,14 @@ bulk.ColumnMappings.Add(nameof(Product.Name), &quot;Name&quot;);
 // ...
 await bulk.WriteToServerAsync(dataTableOrDataReader);</code></pre>
 
+<div class="callout try"><span class="title">Try it yourself (no install needed)</span>
+<ul>
+<li>🧪 <a href="../lab.html?scenario=inserts">Lab: Inserting many rows</a>: compare the approaches' SQL, round trips and estimated time.</li>
+<li>🧪 <a href="../lab.html?scenario=updates">Lab: Updating many rows</a>: compare the approaches' SQL, round trips and estimated time.</li>
+<li>▶ <a href="../playground/?example=batching">Playground: SaveChanges per row vs once</a>: run it with real EF Core 10 in your browser and inspect every SQL command.</li>
+<li>▶ <a href="../playground/?example=bulk-update">Playground: ExecuteUpdate and ExecuteDelete</a>: run it with real EF Core 10 in your browser and inspect every SQL command.</li>
+</ul></div>
+
 <div class="takeaways">
   <h2 class="box-title" id="key-takeaways">🔑 Key takeaways</h2>
   <ul>

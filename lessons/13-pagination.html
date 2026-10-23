@@ -139,6 +139,12 @@ Return the cursor to clients as an opaque string, for example Base64 of the JSON
 var total = await filtered.CountAsync();           // round trip 1
 var items = await filtered.OrderBy(o =&gt; o.Id).Skip(skip).Take(take).ToListAsync();  // round trip 2</code></pre>
 
+<div class="callout try"><span class="title">Try it yourself (no install needed)</span>
+<ul>
+<li>🧪 <a href="../lab.html?scenario=paging">Lab: Offset vs keyset paging</a>: compare the approaches' SQL, round trips and estimated time.</li>
+<li>▶ <a href="../playground/?example=pagination">Playground: Offset vs keyset paging</a>: run it with real EF Core 10 in your browser and inspect every SQL command.</li>
+</ul></div>
+
 <div class="takeaways">
   <h2 class="box-title" id="key-takeaways">🔑 Key takeaways</h2>
   <ul>

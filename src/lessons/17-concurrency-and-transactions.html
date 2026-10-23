@@ -135,6 +135,11 @@ await strategy.ExecuteAsync(async () =>
 ```
 <p>The delegate may run more than once, so make it <b>idempotent</b>. Don't, for example, add entities to the context outside the delegate and then retry. Create or attach them inside it.</p>
 
+<div class="callout try"><span class="title">Try it yourself (no install needed)</span>
+<ul>
+<li>▶ <a href="../playground/?example=transaction">Playground: Transactions and rollback</a>: run it with real EF Core 10 in your browser and inspect every SQL command.</li>
+</ul></div>
+
 <div class="takeaways">
   <h2 class="box-title">🔑 Key takeaways</h2>
   <ul>

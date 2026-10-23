@@ -157,6 +157,11 @@ await foreach (var o in ShopQueries.OrdersForCustomer(db, 7)) { /* ... */ }</cod
 if (filter.CategoryId is int c) q = q.Where(p =&gt; p.CategoryId == c);      // parameter: good
 if (filter.MaxPrice is decimal m) q = q.Where(p =&gt; p.Price &lt;= m);         // parameter: good</code></pre>
 
+<div class="callout try"><span class="title">Try it yourself (no install needed)</span>
+<ul>
+<li>▶ <a href="../playground/?example=compiled-query">Playground: Compiled queries</a>: run it with real EF Core 10 in your browser and inspect every SQL command.</li>
+</ul></div>
+
 <div class="takeaways">
   <h2 class="box-title" id="key-takeaways">🔑 Key takeaways</h2>
   <ul>

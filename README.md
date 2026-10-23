@@ -29,6 +29,34 @@ Every lesson contains: goal and objectives, explanations with the SQL EF Core ge
 - Works on **phones**, and **prints** cleanly.
 - **Accessible**: WCAG 2.1 AA checked automatically in both themes. Keyboard navigable, with a skip link and screen-reader labels.
 - **✨ AI tutor**: select text, right-click, and ask (see below).
+- **🧪 Lab** (`lab.html`): compare EF Core approaches side by side (see below).
+- **▶ Playground** (`playground/`): write and run real EF Core 10 code in your browser (see below).
+
+## 🧪 Lab: compare approaches
+
+The [Lab](https://johanccs.github.io/EF-Core-optim/lab.html) has six scenarios, each linked to its lesson: N+1, cartesian explosion, tracking, offset vs keyset paging, inserting many rows, and updating many rows. For each approach it shows:
+
+- the C# code and the **real SQL EF Core 10 generates** for SQL Server. The SQL is produced by `tools/lab-sql`, which runs EF Core's SQL Server provider with execution suppressed, so no database is needed.
+- round trips, rows the database reads, rows returned and data moved;
+- an **estimated** time, split into network, database, transfer and EF Core processing, for the data size and network you choose.
+
+The estimates come from a deliberately simple, documented cost model. Every constant is listed on the page under "How the estimate works". They show which cost dominates and how approaches compare. They don't predict production timings.
+
+Deep link to a scenario with `lab.html?scenario=<id>`, where `<id>` is `n-plus-one`, `cartesian`, `tracking`, `paging`, `inserts` or `updates`.
+
+## ▶ Playground: real EF Core in your browser
+
+The [Playground](https://johanccs.github.io/EF-Core-optim/playground/) runs **real EF Core 10** with **SQLite** compiled to WebAssembly, and the **Roslyn C# compiler**, entirely in the browser. You don't install anything and no server is involved.
+
+- 13 runnable examples linked to their lessons, plus a blank template. `db` is the course's `ShopContext`, seeded with deterministic data in three sizes.
+- **Output** shows console output, `.Dump()` tables, EF Core warnings and runtime errors. Compile errors point at your own line and column.
+- **SQL** lists every command EF Core sent, with parameters and duration. The summary counts round trips and tracked entities.
+- **Model** shows the entity classes and configuration.
+- Ctrl+Enter runs the code. Tab indents; press Esc then Tab to leave the editor. Drafts are saved per example. `playground/?example=<id>` deep-links to an example.
+
+Because it runs on SQLite, some SQL differs from SQL Server. For example, SQLite has no decimal type, so EF Core compares decimals with `ef_compare()`. The SQLite provider also doesn't batch `SaveChanges` commands. The playground notes this where it matters.
+
+The first visit downloads about 10 MB (.NET runtime, EF Core, SQLite, the compiler), which the browser caches. GitHub Pages can't negotiate Brotli compression, so the site keeps only precompressed `.br` runtime files, and `playground/js/start.js` decompresses them in the browser using Google's Brotli decoder (MIT licence, vendored).
 
 ## ✨ AI tutor (OpenAI)
 
@@ -74,8 +102,29 @@ assets/js/ai-assistant.js  right-click AI tutor (OpenAI Responses API)
 assets/js/search-index.js  generated full-text search index
 assets/js/theme-init.js  applies the saved theme and lesson menu size before first paint
 build.py                 builds src/lessons → lessons + search index
-tests/run-tests.mjs      end-to-end, accessibility and AI tutor tests
+lab.html                 the Lab (simulator) page
+assets/js/lab.js         Lab scenarios and cost model
+assets/js/lab-data.js    generated: real EF Core 10 SQL for each Lab approach
+assets/css/lab.css       Lab styles (validated chart palette)
+tools/lab-sql/           console app that generates lab-data.js with EF Core's SQL Server provider
+src/playground/          Playground source (Blazor WebAssembly, EF Core 10, SQLite, Roslyn)
+playground/              generated: the built Playground served by GitHub Pages (don't edit by hand)
+build_playground.py      publishes src/playground into playground/ and optimizes it for GitHub Pages
+tests/run-tests.mjs      end-to-end, accessibility, AI tutor, Lab and Playground tests
 ```
+
+### Rebuilding the Lab SQL and the Playground
+
+Both need the [.NET 10 SDK](https://dotnet.microsoft.com/download). The Playground also needs the WebAssembly build tools:
+
+```bash
+dotnet workload install wasm-tools
+
+dotnet run --project tools/lab-sql -- "$PWD"   # regenerate assets/js/lab-data.js (run from the repository root)
+python3 build_playground.py                    # rebuild playground/ (prints the output size)
+```
+
+Only rebuild `playground/` when `src/playground` changes. Each rebuild commits about 15 MB of generated files, so avoid unnecessary rebuilds to keep the repository history small.
 
 ### Editing a lesson
 
@@ -87,7 +136,7 @@ Edit the file in `src/lessons/`, then run `python3 build.py`. Sources are plain 
 python3 build.py                     # regenerate lessons and the search index
 npm ci && npx playwright install chromium
 npm run validate                     # HTML validation (html-validate)
-npm test                             # all pages, links, axe WCAG 2.1 AA (light and dark), search, progress, AI tutor (mocked), 404
+npm test                             # all pages, links, axe WCAG 2.1 AA (light and dark), search, progress, AI tutor (mocked), Lab, Playground (real EF Core run), 404
 ```
 
 There's no CI, so run these before every push. After `python3 build.py`, `git status` should show no changes under `lessons/` or `assets/js/search-index.js` that you haven't committed.

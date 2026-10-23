@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
+
+  <!--
+    EF Core Playground: real EF Core 10 + SQLite + the Roslyn C# compiler, all running in the browser.
+    Build and copy into the site with:  python3 build_playground.py   (see README → Playground)
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Playground</RootNamespace>
+    <AssemblyName>EfPlayground</AssemblyName>
+    <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- English compiler messages only (Roslyn ships ~10 MB of translations) -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <BlazorWebAssemblyLoadAllGlobalizationData>false</BlazorWebAssemblyLoadAllGlobalizationData>
+    <!-- Trim only what user code can never reach; everything below stays whole -->
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>partial</TrimMode>
+    <SuppressTrimAnalysisWarnings>true</SuppressTrimAnalysisWarnings>
+    <!-- e_sqlite3 has a few varargs functions EF Core never calls (sqlite3_config etc.) -->
+    <NoWarn>$(NoWarn);WASM0001</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.13" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.13" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.13" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Assemblies user code may call: keep them whole so nothing is missing at run time -->
+    <TrimmerRootAssembly Include="System.Private.CoreLib;System.Runtime;System.Linq;System.Linq.Queryable;System.Linq.Expressions;System.Collections;System.Collections.Concurrent;System.Console;System.Text.RegularExpressions;System.ComponentModel;System.ComponentModel.Primitives;System.ComponentModel.TypeConverter;System.ComponentModel.Annotations;System.Data.Common;System.Memory;System.ObjectModel;System.Transactions.Local;System.Text.Json;System.Diagnostics.DiagnosticSource;Microsoft.EntityFrameworkCore;Microsoft.EntityFrameworkCore.Abstractions;Microsoft.EntityFrameworkCore.Relational;Microsoft.EntityFrameworkCore.Sqlite;Microsoft.Data.Sqlite;Microsoft.Extensions.Logging.Abstractions;Microsoft.Extensions.DependencyInjection.Abstractions;Microsoft.CodeAnalysis;Microsoft.CodeAnalysis.CSharp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Shown read-only in the Model tab -->
+    <EmbeddedResource Include="Model/Shop.cs" LogicalName="Shop.cs" />
+  </ItemGroup>
+
+  <!-- Reference assemblies (plain PE metadata) for the in-browser C# compiler -->
+  <Target Name="CopyCompilerReferences" AfterTargets="Publish">
+    <ItemGroup>
+      <_CompilerRef Include="@(ReferencePath)" Exclude="@(ReferencePath->WithMetadataValue('Filename','Microsoft.CodeAnalysis'));@(ReferencePath->WithMetadataValue('Filename','Microsoft.CodeAnalysis.CSharp'))" />
+      <_CompilerRef Include="$(OutDir)$(AssemblyName).dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_CompilerRef)" DestinationFolder="$(PublishDir)wwwroot/refs" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>
